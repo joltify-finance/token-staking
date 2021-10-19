@@ -52,6 +52,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         totalStaked = totalStaked.add(_amount);
         depositDates[msg.sender] = block.timestamp;
         // add old emission to deposits and totalStaked
+        // mint emission
         require(token.transferFrom(msg.sender, address(this), _amount), "transfer failed");
     }
 
@@ -65,6 +66,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             amount = amount.mul(100-forcedWithdrawalFeePercent).div(100);
         }
         // add emission to amount, and withdraw togather
+        // mint emission
         require(token.transfer(_sender, amount), "transfer failed");
     }
 
