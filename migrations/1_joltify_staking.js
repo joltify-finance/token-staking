@@ -1,5 +1,5 @@
-const JoltifyStaking = artifacts.require("JoltifyStaking");
+const Staking = artifacts.require("Staking");
 
 module.exports = function (deployer) {
-  deployer.deploy(JoltifyStaking);
+  deployer.deploy(Staking);
 };
