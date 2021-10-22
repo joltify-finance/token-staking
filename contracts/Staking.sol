@@ -11,8 +11,6 @@ import "./IERC20Mintable.sol";
 
 contract Staking is Ownable, ReentrancyGuard, Initializable {
 
-    // test private key: 0d7bcb669a61c4db754af3cbc70f446d0f299a54b43605b77d92f06efaee76f3
-
     using Address for address;
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
@@ -124,7 +122,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         emit Withdrawn(_sender, amount, fee, balances[_sender], userShare, timePassed);
     }
 
-    // token need to set miner
     function _mint(address _user, uint256 _amount) internal returns (uint256 userShare, uint256 timePassed) {
         uint256 currentBalance = balances[_user];
         uint256 amount = _amount == 0 ? currentBalance : _amount; // if withdraw 0, it means withdraw all
@@ -138,13 +135,14 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         return (_userShare, _timePassed);
     }
 
+    // total and timePassed returns 0?
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
         if (0==_depositDate || 0==_amount) {
             return (0, 0, 0);
         }
-        uint256 _timePassed = block.timestamp.sub( _depositDate );
+        timePassed = block.timestamp.sub( _depositDate );
         uint256 userEmissionRate = APR.add( getSupplyBasedEmissionRate() );
-        userShare = _amount.mul(userEmissionRate).mul(_timePassed).div(YEAR * 1 ether);
+        userShare = _amount.mul(userEmissionRate).mul(timePassed).div(YEAR * 1 ether);
         total = _amount.mul(maxEmissionRate).mul(timePassed).div(YEAR * 1 ether);
     }
 
