@@ -22,8 +22,15 @@
 //
 // const fs = require('fs');
 // const mnemonic = fs.readFileSync(".secret").toString().trim();
+
+const fs = require('fs');
 const HDWalletProvider = require('@truffle/hdwallet-provider');
-const privateKeys = ['0x开头的private key']
+let privateKey = fs.readFileSync(".privateKey").toString().trim();
+if (-1===privateKey.toLowerCase().indexOf('0x')) {
+  privateKey = '0x' + privateKey
+}
+const privateKeys = [privateKey]
+
 module.exports = {
   /**
    * Networks define how you connect to your ethereum client and let you set the

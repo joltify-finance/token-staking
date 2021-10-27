@@ -14,6 +14,7 @@
   "license": "ISC",
   "dependencies": {
     "@openzeppelin/contracts": "^4.3.2",
-    "@truffle/hdwallet-provider": "^1.5.1"
+    "@truffle/hdwallet-provider": "^1.5.1",
+    "truffle-flattener": "git+https://github.com/jplew/truffle-flattener.git"
   }
 }
