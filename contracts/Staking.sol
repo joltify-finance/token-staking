@@ -191,8 +191,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     function withdraw(uint256 _amount) public nonReentrant {
         address _sender = msg.sender;
         require( balances[_sender]>=_amount , "insufficient amount");
-        (uint256 userShare, uint256 timePassed) = _mint(_sender, _amount); // emission was added to balances[_sender] and totalStaked in _mint()
-        uint256 amount = 0==_amount?balances[_sender]:_amount;
+        uint256 amount = 0==_amount ? balances[_sender] : _amount;
+        (uint256 userShare, uint256 timePassed) = _mint(_sender, amount); // emission was added to balances[_sender] and totalStaked in _mint()
         amount = amount.add(userShare); // withdraw emission together
         balances[_sender] = balances[_sender].sub(amount);
         totalStaked = totalStaked.sub(amount);
