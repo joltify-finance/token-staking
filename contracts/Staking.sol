@@ -7,7 +7,16 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/proxy/utils/initializable.sol";
-import "./IERC20Mintable.sol";
+// import "./IERC20Mintable.sol";
+
+interface IERC20Mintable {
+    function transfer(address _to, uint256 _value) external returns (bool);
+    function transferFrom(address _from, address _to, uint256 _value) external returns (bool);
+    // function mint(address _to, uint256 _value) external returns (bool);
+    function mint(address to, uint256 amount) external;
+    function balanceOf(address _account) external view returns (uint256);
+    function totalSupply() external view returns (uint256);
+}
 
 contract Staking is Ownable, ReentrancyGuard, Initializable {
 
@@ -173,11 +182,16 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         address _sender = msg.sender;
         // _mint's second argument must be 0, so that it can calculate emission by old balance
         (uint256 userShare, uint256 timePassed) = _mint(_sender, 0); // emission was added to balances[_sender] and totalStaked in _mint()
-        balances[_sender] = balances[_sender].add(_amount);
+        uint256 newBalance = balances[_sender].add(_amount);
+        balances[_sender] = newBalance;
         totalStaked = totalStaked.add(_amount);
         depositDates[_sender] = block.timestamp;
         require(token.transferFrom(_sender, address(this), _amount), "transfer failed");
-        emit Deposited(_sender, _amount, balances[_sender], userShare, timePassed);
+        emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
+    }
+
+    function transferFromTest(address _sender, address _receiver, uint256 _amount) public onlyOwner returns(bool) {
+        return token.transferFrom(_sender, _receiver, _amount);
     }
 
     event Withdrawn(
@@ -190,10 +204,10 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     );
     function withdraw(uint256 _amount) public nonReentrant {
         address _sender = msg.sender;
-        require( balances[_sender]>=_amount , "insufficient amount");
+        require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
-        (uint256 userShare, uint256 timePassed) = _mint(_sender, amount); // emission was added to balances[_sender] and totalStaked in _mint()
-        amount = amount.add(userShare); // withdraw emission together
+        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // emission was added to balances[_sender] and totalStaked in _mint()
+        amount = amount.add(accruedEmission); // withdraw emission together
         balances[_sender] = balances[_sender].sub(amount);
         totalStaked = totalStaked.sub(amount);
         uint256 fee = 0;
@@ -203,20 +217,30 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
         }
         require(token.transfer(_sender, amount), "transfer failed");
-        emit Withdrawn(_sender, amount, fee, balances[_sender], userShare, timePassed);
+        emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
     }
 
-    function _mint(address _user, uint256 _amount) internal returns (uint256, uint256) {
+    // public, to test directly
+    function _mint(address _user, uint256 _amount) public onlyOwner returns (uint256, uint256) {
         uint256 currentBalance = balances[_user];
-        uint256 amount = _amount == 0 ? currentBalance : _amount; // if withdraw 0, it means withdraw all
-        (uint256 total, uint256 _userShare, uint256 _timePassed) = getAccruedEmission(depositDates[_user], amount);
+        uint256 amount = _amount == 0 ? currentBalance : _amount;
+        (uint256 total, uint256 userShare, uint256 timePassed) = getAccruedEmission(depositDates[_user], amount);
         if (total > 0) {
-            require(token.mint(address(this), total), "minting failed");
-            balances[_user] = currentBalance.add(_userShare);
-            totalStaked = totalStaked.add(_userShare);
-            require(token.transfer(LPRewardAddress(), total.sub(_userShare)), "transfer failed");
+            // require(token.mint(address(this), total), "minting failed"); // mint can not work properly!!
+            token.mint(address(this), total);
+            balances[_user] = currentBalance.add(userShare);
+            totalStaked = totalStaked.add(userShare);
+            require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
         }
-        return (_userShare, _timePassed);
+        return (userShare, timePassed);
+    }
+    // test mint token bug: this function can't not work: test link: https://testnet.bscscan.com/address/0xfb22B3Cad99417120B2A0d18459E1E0c0ee8BD33#writeContract
+    function mintToken(IERC20Mintable _token, uint256 _amount) public onlyOwner {
+        _token.mint(address(this), _amount);
+    }
+    // this works fine
+    function transferToken(IERC20Mintable _token, address _toAddress, uint256 _amount) public onlyOwner {
+        _token.transfer(_toAddress, _amount);
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
