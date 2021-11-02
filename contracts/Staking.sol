@@ -7,13 +7,12 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/proxy/utils/initializable.sol";
-// import "./IERC20Mintable.sol";
 
 interface IERC20Mintable {
     function transfer(address _to, uint256 _value) external returns (bool);
     function transferFrom(address _from, address _to, uint256 _value) external returns (bool);
     // function mint(address _to, uint256 _value) external returns (bool);
-    function mint(address to, uint256 amount) external;
+    function mint(address to, uint256 amount) external; // there is not return in token contract's mint func
     function balanceOf(address _account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
 }
@@ -52,13 +51,13 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token; // token that allowed to deposit and it is mintable
     uint256 constant YEAR = 365 days; // https://docs.soliditylang.org/en/v0.8.9/units-and-global-variables.html
-    uint256 public maxEmissionRate = 0.15 ether; // 15%, to calculate total emission
+    uint256 public maxEmissionRate = 0.15 ether; // 15%, to calculate total emission, so userShare must less than 15%
     uint256 public updateDelayTime = 7 days;
     
     LinearDesc public APR = LinearDesc({
-        initVal: 0.15 ether,
-        minVal: 0.01 ether,
-        descMonthly: 0.01 ether // descend 1% of initVal per month, but calculate by second
+        initVal: 0.075 ether,
+        minVal: 0.005 ether,
+        descMonthly: 0.005 ether // descend 1% of initVal per month, but calculate by second
     });
 
     LinearDesc public totalSupplyFactor = LinearDesc({
@@ -86,6 +85,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
         startTime = block.timestamp;
+
+        require(_APRInitVal <= maxEmissionRate.div(2), "_APRInitVal>maxEmissionRate/2 is not allowed"); // maxSupplyBasedEmission is maxEmissionRate/2, userShareRate=APR+SupplyBasedEmission, userShareRate<maxEmissionRate is required
+
         APR.initVal = _APRInitVal;
         APR.minVal = _APRMinVal;
         APR.descMonthly = _APRDescMonthly;
@@ -165,6 +167,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     function setAPR(uint256 _APRInitVal, uint256 _APRMinVal, uint256 _APRDescMonthly) public onlyOwner {
+        require(_APRInitVal <= maxEmissionRate.div(2), "_APRInitVal>maxEmissionRate/2 is not allowed");
         APR.initVal = _APRInitVal;
         APR.minVal = _APRMinVal;
         APR.descMonthly = _APRDescMonthly;
@@ -188,10 +191,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         depositDates[_sender] = block.timestamp;
         require(token.transferFrom(_sender, address(this), _amount), "transfer failed");
         emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
-    }
-
-    function transferFromTest(address _sender, address _receiver, uint256 _amount) public onlyOwner returns(bool) {
-        return token.transferFrom(_sender, _receiver, _amount);
     }
 
     event Withdrawn(
@@ -220,27 +219,19 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
     }
 
-    // public, to test directly
-    function _mint(address _user, uint256 _amount) public onlyOwner returns (uint256, uint256) {
+    function _mint(address _user, uint256 _amount) internal returns (uint256, uint256) {
         uint256 currentBalance = balances[_user];
         uint256 amount = _amount == 0 ? currentBalance : _amount;
         (uint256 total, uint256 userShare, uint256 timePassed) = getAccruedEmission(depositDates[_user], amount);
         if (total > 0) {
-            // require(token.mint(address(this), total), "minting failed"); // mint can not work properly!!
             token.mint(address(this), total);
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
+            // if userShare>total, it will failed below
+            require(userShare<total, "userShare>=total is not allowed");
             require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
         }
         return (userShare, timePassed);
-    }
-    // test mint token bug: this function can't not work: test link: https://testnet.bscscan.com/address/0xfb22B3Cad99417120B2A0d18459E1E0c0ee8BD33#writeContract
-    function mintToken(IERC20Mintable _token, uint256 _amount) public onlyOwner {
-        _token.mint(address(this), _amount);
-    }
-    // this works fine
-    function transferToken(IERC20Mintable _token, address _toAddress, uint256 _amount) public onlyOwner {
-        _token.transfer(_toAddress, _amount);
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
@@ -248,9 +239,10 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             return (0, 0, 0);
         }
         timePassed = block.timestamp.sub( _depositDate );
-        uint256 userEmissionRate = getLinearDesc(APR).add( getSupplyBasedEmissionRate() );
+        uint256 userEmissionRate = getLinearDesc(APR).add( getSupplyBasedEmissionRate() ); // if APR=15%, getSupplyBasedEmissionRate=7.5%, userEmissionRate will be 22.5%, userShare > total
+        require(userEmissionRate <= maxEmissionRate, "userEmissionRate>maxEmissionRate is not allowed");
         userShare = _amount.mul(userEmissionRate).mul(timePassed).div(YEAR * 1 ether);
-        total = _amount.mul(maxEmissionRate).mul(timePassed).div(YEAR * 1 ether);
+        total =     _amount.mul(maxEmissionRate ).mul(timePassed).div(YEAR * 1 ether);
     }
 
     function getSupplyBasedEmissionRate() public view returns (uint256) {
