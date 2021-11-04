@@ -11,7 +11,6 @@ import "@openzeppelin/contracts/proxy/utils/initializable.sol";
 interface IERC20Mintable {
     function transfer(address _to, uint256 _value) external returns (bool);
     function transferFrom(address _from, address _to, uint256 _value) external returns (bool);
-    // function mint(address _to, uint256 _value) external returns (bool);
     function mint(address to, uint256 amount) external; // there is not return in token contract's mint func
     function balanceOf(address _account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
