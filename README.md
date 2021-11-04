@@ -1,3 +1,9 @@
+truffle unit test for one file:
+```
+truffle test ./test/Staking.test.js
+```
+if run `truffle test`, it will test all unit test
+
 install dependencies
 
 ```shell
