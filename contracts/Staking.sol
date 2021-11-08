@@ -75,7 +75,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 _APRDescMonthly,
         uint256 _totalSupplyFactorInitVal,
         uint256 _totalSupplyFactorMinVal,
-        uint256 _totalSupplyFactorDescMonthly
+        uint256 _totalSupplyFactorDescMonthly,
+        uint256 _updateDelayTime
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         require(_forcedWithdrawalFee<=1 ether, "forceWithdrawFeePercent must <= 1 ether");
@@ -93,6 +94,11 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         totalSupplyFactor.initVal = _totalSupplyFactorInitVal;
         totalSupplyFactor.minVal = _totalSupplyFactorMinVal;
         totalSupplyFactor.descMonthly = _totalSupplyFactorDescMonthly;
+        updateDelayTime = _updateDelayTime;
+    }
+
+    function setUpdateDelayTime(uint256 _updateDelayTime) public onlyOwner {
+        updateDelayTime = _updateDelayTime;
     }
 
     function getLinearDesc(LinearDesc memory params) internal view returns(uint256) {
@@ -162,7 +168,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     function _paramUpdateDelayElapsed(uint256 _paramTimestamp) internal view returns (bool) {
-        return block.timestamp > _paramTimestamp.add(updateDelayTime);
+        return block.timestamp >= _paramTimestamp.add(updateDelayTime);
     }
 
     function setAPR(uint256 _APRInitVal, uint256 _APRMinVal, uint256 _APRDescMonthly) public onlyOwner {
