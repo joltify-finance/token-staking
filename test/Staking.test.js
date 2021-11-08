@@ -1,7 +1,4 @@
-// require("@nomiclabs/hardhat-web3"); // https://github.com/nomiclabs/hardhat/issues/1930
-
-const ethers = require('ethers')
-
+// https://testnet.bscscan.com/address/0x3326fc00E49e2416bE383e82d68315f53a181BCB#writeContract
 const {
   BN,           // Big Number support
   constants,    // Common constants, like the zero address and largest integers
@@ -11,42 +8,105 @@ const {
 
 const JoltifyCoin = artifacts.require('JoltifyCoin')
 const Staking = artifacts.require('Staking')
-describe('Jolt staking test', _=>{ // "describe" can also be replaced by "contract"
-  before(async ()=>{
-    // this.token = await JoltifyCoin.deployed() // .deployed() is the same to .new() like below
+describe('Jolt staking test', _=>{
+
+  it("Should go to before block and can set timeout there", async ()=>{
+    // console.log(typeof web3.utils.toWei('75', 'finney'), web3.utils.toWei('75', 'finney')); return; // string
     this.token = await JoltifyCoin.new()
-    this.staking = await Staking.new();
-    this.userAddress = '0xf721d978533be6c1135145929c12612c485d3b94'
+    this.staking = await Staking.new()
+    this.accounts = await web3.eth.getAccounts() // 0: admin, 1-2: for testing, 3: as LPRewardAddress tester
+    await this.token.mint(this.accounts[1], 1000000)
+    await this.token.mint(this.accounts[2], 1000000)
+    await this.token.approve(this.staking.address, 1000000, {from: this.accounts[1]})
+    await this.token.approve(this.staking.address, 1000000, {from: this.accounts[2]})
+  }).timeout(10000)
 
-    // next time run `truffle test`, these addresses keep the same to last time
-    console.log('token address:', this.token.address)
-    console.log('staking address:', this.staking.address)
-
-    // uint256 returns to javascript is BN
-    // use .capOfToken() not .capOfToken
-    console.log('BN add test', (await this.token.capOfToken()).add(new BN(1)).toString() )
-  })
-
-  it('Should deploy contract properly', async ()=>{
-    assert(''!==this.token.address) // if deploy fail, address would be empty string: ''
-    assert(''!==this.staking.address)
-  })
-
-  it('Should be rejected if ment beyond cap', async ()=>{
-    try { // mented success, test failed
-      await this.token.mint(this.userAddress, (await this.token.capOfToken()).add(new BN(1)) ) // if .add(1), get failure
-    } catch(e) { // mented failed, test success
-      // console.log('e.message: ', e.message) // Returned error: VM Exception while processing transaction: revert ERC20Capped: cap exceeded -- Reason given: ERC20Capped: cap exceeded.
-      assert(e.message.includes('ERC20Capped: cap exceeded'))
-      return
+  it('Should initialize staking properly', async ()=>{
+    const init = {
+      token: this.token.address,
+      forcedWithdrawalFee: new BN(web3.utils.toWei('50', 'finney')), // 1 finney = 1/1000 ether
+      withdrawalLockDuration: new BN(5), // seconds
+      LPRewardAddress: this.accounts[3],
+      APRInitVal: new BN(web3.utils.toWei('75', 'finney')),
+      APRMinVal: new BN(web3.utils.toWei('5', 'finney')),
+      APRDescMonthly: new BN(web3.utils.toWei('5', 'finney')),
+      totalSupplyFactorInitVal: new BN(web3.utils.toWei('50', 'finney')),
+      totalSupplyFactorMinVal: new BN(web3.utils.toWei('5', 'finney')),
+      totalSupplyFactorDescMonthly: new BN(web3.utils.toWei('5', 'finney')),
+      updateDelayTime: new BN(0)
     }
-    assert(false)
+
+    await this.staking.initialize(
+      init.token, // token address
+      init.forcedWithdrawalFee, //_forcedWithdrawalFee, 1 finney = 1/1000 ether
+      init.withdrawalLockDuration, // _withdrawalLockDuration
+      init.LPRewardAddress, // _LPRewardAddress
+      init.APRInitVal, // _APRInitVal
+      init.APRMinVal, // _APRMinVal
+      init.APRDescMonthly, // _APRDescMonthly
+      init.totalSupplyFactorInitVal, // _totalSupplyFactorInitVal
+      init.totalSupplyFactorMinVal, // _totalSupplyFactorMinVal
+      init.totalSupplyFactorDescMonthly, // _totalSupplyFactorDescMonthly
+      init.updateDelayTime // _updateDelayTime
+    )
+
+    assert(init.token===await this.staking.token())
+    assert(init.forcedWithdrawalFee.eq(await this.staking.forcedWithdrawalFee()))
+    assert(init.withdrawalLockDuration.eq(await this.staking.withdrawalLockDuration()))
+    assert(init.LPRewardAddress===await this.staking.LPRewardAddress())
+    const APR = await this.staking.APR()
+    assert(init.APRInitVal.eq(APR.initVal))
+    assert(init.APRMinVal.eq(APR.minVal))
+    assert(init.APRDescMonthly.eq(APR.descMonthly))
+    const totalSupplyFactor = await this.staking.totalSupplyFactor()
+    assert(init.totalSupplyFactorInitVal.eq(totalSupplyFactor.initVal))
+    assert(init.totalSupplyFactorMinVal.eq(totalSupplyFactor.minVal))
+    assert(init.totalSupplyFactorDescMonthly.eq(totalSupplyFactor.descMonthly))
+    assert(init.updateDelayTime.eq(await this.staking.updateDelayTime()))
+  }).timeout(10000)
+
+  it('Should reject all if not owner call onlyOwner function', async ()=>{
+    const sender = {from: this.accounts[1]} // not admin
+    const intVal = new BN(1)
+    const addressVal = this.accounts[9]
+    try {
+      await this.staking.setUpdateDelayTime(intVal, sender)
+      assert(false)
+    } catch(e) {
+      assert(e.message.includes('Ownable: caller is not the owner'))
+    }
+    try {
+      await this.staking.setWithdrawalLockDuration(intVal, sender)
+      assert(false)
+    } catch(e) {
+      assert(e.message.includes('Ownable: caller is not the owner'))
+    }
+    try {
+      await this.staking.setForcedWithdrawalFee(intVal, sender)
+      assert(false)
+    } catch(e) {
+      assert(e.message.includes('Ownable: caller is not the owner'))
+    }
+    try {
+      await this.staking.setLPRewardAddress(addressVal, sender)
+      assert(false)
+    } catch(e) {
+      assert(e.message.includes('Ownable: caller is not the owner'))
+    }
+    try {
+      await this.staking.setAPR(intVal, intVal, intVal, sender)
+      assert(false)
+    } catch(e) {
+      assert(e.message.includes('Ownable: caller is not the owner'))
+    }
+  }).timeout(10000)
+
+  it('Should setUpdateDelayTime properly', async ()=>{
+    const oldUpdateDelayTime = await this.staking.updateDelayTime()
+    const newUpdateDelayTime = new BN(5)
+    assert(!oldUpdateDelayTime.eq(newUpdateDelayTime))
+    await this.staking.setUpdateDelayTime(newUpdateDelayTime)
+    assert( newUpdateDelayTime.eq(await this.staking.updateDelayTime()) )
   })
 
-  it('Should ment proper amount', async ()=>{
-    const amount = new BN(20211104)
-    await this.token.mint(this.userAddress, amount)
-    const balance = await this.token.balanceOf(this.userAddress)
-    assert(amount.eq(balance)) // comparing between BigNumber need use .eq，not == or ===
-  })
 })
