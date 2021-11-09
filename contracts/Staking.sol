@@ -41,8 +41,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     AddressParam public LPRewardAddressParam;
-    UintParam public forcedWithdrawalFeeParam = UintParam({oldValue: 0.05 ether, newValue: 0.05 ether, timestamp: block.timestamp}); // 1 ether->100%, 0.01 ether->1%, 0.075 ether->7.5%
-    UintParam public withdrawalLockDurationParam = UintParam({oldValue: 180, newValue: 180, timestamp: block.timestamp}); // in second
+    UintParam public forcedWithdrawalFeeParam;// = UintParam({oldValue: 0.05 ether, newValue: 0.05 ether, timestamp: block.timestamp}); // 1 ether->100%, 0.01 ether->1%, 0.075 ether->7.5%
+    UintParam public withdrawalLockDurationParam;// = UintParam({oldValue: 180, newValue: 180, timestamp: block.timestamp}); // in second
 
     uint256 public startTime = block.timestamp; // to calculate APR desc
     uint256 public totalStaked = 0;
