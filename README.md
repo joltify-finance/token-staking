@@ -1,31 +1,24 @@
-truffle unit test for one file:
-```
-truffle test ./test/Staking.test.js
-```
-if run `truffle test`, it will test all unit test
-
-install dependencies
-
+# How to run
+## Set up
+Clone the repo and then install dependencies:
 ```shell
-npm i
+$ npm i
 ```
-
-compile
-
+## Testing
+To run the entire test suite:
+```shell
+$ truffle test
 ```
-truffle compile
+## Compiling
+This will create build/contracts directory with contract's artifacts:
+```shell
+$ truffle compile
 ```
-
-run local block chain net
-
+## Deployment
+* Create a file named `.privateKey` in the root path, paste your test private key of bsc testnet in it
+* Click [here](https://testnet.binance.org/faucet-smart) to get some test BNB
+* Run command below to deploy to bsc test net
+```shell
+$ truffle migrate --reset --network bscTestnet
 ```
-truffle develop
-```
-
-deploy
-
-```
-migrate --reset
-```
-
-if you want to deploy to bscTestnet, create a file in root directory named ".privateKey", and put privateKey in
+More about truffle commands [here](https://trufflesuite.com/docs/truffle/overview)
