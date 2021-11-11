@@ -1,3 +1,9 @@
+# Designed by Joltify Finance Team
+## Home page
+[https://www.joltify.io/](https://www.joltify.io/)
+## Documents
+[https://docs.joltify.io/](https://docs.joltify.io/)
+
 # How to run
 ## Set up
 Clone the repo and then install dependencies:
