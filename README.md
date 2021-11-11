@@ -1,25 +1,30 @@
-install dependencies
+# Designed by Joltify Finance Team
+## Home page
+[https://www.joltify.io/](https://www.joltify.io/)
+## Documents
+[https://docs.joltify.io/](https://docs.joltify.io/)
 
+# How to run
+## Set up
+* Clone the repo and then install dependencies:
 ```shell
-npm i
+$ npm i
 ```
-
-compile
-
+* Create a file named `.privateKey` in the root path, paste your test private key of bsc testnet in it
+## Testing
+* To run the entire test suite:
+```shell
+$ truffle test
 ```
-truffle compile
+## Compiling
+* This will create build/contracts directory with contract's artifacts:
+```shell
+$ truffle compile
 ```
-
-run local block chain net
-
+## Deployment
+* Click [here](https://testnet.binance.org/faucet-smart) to get some test BNB
+* Run command below to deploy to bsc test net
+```shell
+$ truffle migrate --reset --network bscTestnet
 ```
-truffle develop
-```
-
-deploy
-
-```
-migrate --reset
-```
-
-if you want to deploy to bscTestnet, create a file in root directory named ".privateKey", and put privateKey in
+More about truffle commands [here](https://trufflesuite.com/docs/truffle/overview)
