@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/proxy/utils/initializable.sol";
 interface IERC20Mintable {
     function transfer(address _to, uint256 _value) external returns (bool);
     function transferFrom(address _from, address _to, uint256 _value) external returns (bool);
-    function mint(address to, uint256 amount) external; // there is not return in token contract's mint func
+    function mint(address to, uint256 amount) external;
     function balanceOf(address _account) external view returns (uint256);
     function totalSupply() external view returns (uint256);
 }
@@ -34,57 +34,73 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 timestamp;
     }
 
-    struct LinearDesc {
-        uint256 initVal;
-        uint256 minVal;
-        uint256 descMonthly;
-    }
-
     AddressParam public LPRewardAddressParam;
     UintParam public forcedWithdrawalFeeParam;
     UintParam public withdrawalLockDurationParam;
+    UintParam public totalSupplyFactorParam;
+    UintParam public basicAPRParam;
+    UintParam public monthlyDescRateParam;
 
-    uint256 public startTime = block.timestamp; // to calculate APR desc
-    uint256 public totalStaked = 0;
-    mapping(address=>uint256) public balances; // token balance
+    uint256 public startTime; // to calculate APR desc
+    uint256 public totalStaked;
+    mapping(address=>uint256) public balances;
     mapping(address=>uint256) public depositDates;
-    IERC20Mintable public token; // token that allowed to deposit and it is mintable
+    IERC20Mintable public token;
+
     uint256 private constant YEAR = 365 days; // https://docs.soliditylang.org/en/v0.8.9/units-and-global-variables.html
-    uint256 public constant MAX_EMISSION_RATE = 0.15 ether; // 15%, to calculate total emission, so userShare must less than 15%
+    uint256 public constant MAX_EMISSION_RATE = 0.15 ether;
     uint256 public constant PARAM_UPDATE_DELAY = 7 days;
-    
-    LinearDesc public APR;
-    LinearDesc public totalSupplyFactor;
 
     function initialize(
         address _tokenAddress,
         uint256 _forcedWithdrawalFee,
         uint256 _withdrawalLockDuration,
         address _LPRewardAddress,
-        uint256 _APRInitVal,
-        uint256 _APRMinVal,
-        uint256 _APRDescMonthly,
-        uint256 _totalSupplyFactorInitVal,
-        uint256 _totalSupplyFactorMinVal,
-        uint256 _totalSupplyFactorDescMonthly
+        uint256 _totalSupplyFactor,
+        uint256 _basicAPR,
+        uint256 _monthlyDescRate
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
         setForcedWithdrawalFee(_forcedWithdrawalFee);
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
+        setTotalSupplyFactor(_totalSupplyFactor);
+        setBasicAPR(_basicAPR);
+        setMonthlyDescRate(_monthlyDescRate);
         startTime = block.timestamp;
-        setAPR(_APRInitVal, _APRMinVal, _APRDescMonthly);
-        setTotalSupplyFactor(_totalSupplyFactorInitVal, _totalSupplyFactorMinVal, _totalSupplyFactorDescMonthly);
     }
 
-    function getLinearDesc(LinearDesc memory params) internal view returns(uint256) {
-        uint256 descPerSecond = params.descMonthly.div(24*3600*30);
-        uint256 secondsPassed = block.timestamp.sub(startTime);
-        if ( params.initVal.sub(descPerSecond.mul(secondsPassed)) > params.minVal ) {
-            return params.initVal.sub(descPerSecond.mul(secondsPassed));
-        }
-        return params.minVal;
+    function monthlyDescRate() public view returns (uint256) {
+        return _getUintParamValue(monthlyDescRateParam);
+    }
+
+    event MonthlyDescRateSet(uint256 value, address sender);
+    function setMonthlyDescRate(uint256 _value) public onlyOwner {
+        _updateUintParam(monthlyDescRateParam, _value); // if very large, APR drops very quickly
+        emit MonthlyDescRateSet(_value, msg.sender);
+    }
+
+    function basicAPR() public view returns (uint256) {
+        return _getUintParamValue(basicAPRParam);
+    }
+
+    event BasicAPRSet(uint256 value, address sender);
+    function setBasicAPR(uint256 _value) public onlyOwner {
+        require(_value <= MAX_EMISSION_RATE.div(2), "should be less than or equal to half MAX_EMISSION_RATE");
+        _updateUintParam(basicAPRParam, _value);
+        emit BasicAPRSet(_value, msg.sender);
+    }
+
+    function totalSupplyFactor() public view returns (uint256) {
+        return _getUintParamValue(totalSupplyFactorParam);
+    }
+
+    event TotalSupplyFactorSet(uint256 value, address sender);
+    function setTotalSupplyFactor(uint256 _value) public onlyOwner {
+        require(_value <= 1 ether, "should be less than or equal to 1 ether");
+        _updateUintParam(totalSupplyFactorParam, _value);
+        emit TotalSupplyFactorSet(_value, msg.sender);
     }
 
     event WithdrawalLockDurationSet(uint256 value, address sender);
@@ -116,7 +132,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         AddressParam memory param = LPRewardAddressParam;
         if (param.timestamp == 0) {
             param.oldValue = _address;
-        } else if (_paramUpdateDelayElapsed(param.timestamp)) {
+        } else if (_paramUpdateDelayElapsed(param.timestamp)) { // oldVal not in use, change it
             param.oldValue = param.newValue;
         }
         param.newValue = _address;
@@ -133,7 +149,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     function _updateUintParam(UintParam storage _param, uint256 _newValue) internal {
         if (_param.timestamp == 0) {
             _param.oldValue = _newValue;
-        } else if (_paramUpdateDelayElapsed(_param.timestamp)) {
+        } else if (_paramUpdateDelayElapsed(_param.timestamp)) { // oldVal not in use, change it
             _param.oldValue = _param.newValue;
         }
         _param.newValue = _newValue;
@@ -146,20 +162,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     function _paramUpdateDelayElapsed(uint256 _paramTimestamp) internal view returns (bool) {
         return block.timestamp >= _paramTimestamp.add(PARAM_UPDATE_DELAY);
-    }
-
-    function setAPR(uint256 _APRInitVal, uint256 _APRMinVal, uint256 _APRDescMonthly) public onlyOwner {
-        require(_APRInitVal <= MAX_EMISSION_RATE.div(2), "_APRInitVal>MAX_EMISSION_RATE/2 is not allowed");
-        APR.initVal = _APRInitVal;
-        APR.minVal = _APRMinVal;
-        APR.descMonthly = _APRDescMonthly;
-    }
-
-    function setTotalSupplyFactor(uint256 _totalSupplyFactorInitVal, uint256 _totalSupplyFactorMinVal, uint256 _totalSupplyFactorDescMonthly) public onlyOwner {
-        require( _totalSupplyFactorInitVal <= 1 ether, "should be less than or equal to 1 ether");
-        totalSupplyFactor.initVal = _totalSupplyFactorInitVal;
-        totalSupplyFactor.minVal = _totalSupplyFactorMinVal;
-        totalSupplyFactor.descMonthly = _totalSupplyFactorDescMonthly;
     }
 
     event Deposited(
@@ -216,7 +218,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             token.mint(address(this), total);
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
-            // if userShare>total, it will failed below
             require(userShare<total, "userShare>=total is not allowed");
             require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
         }
@@ -228,24 +229,42 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             return (0, 0, 0);
         }
         timePassed = block.timestamp.sub( _depositDate );
-        uint256 userEmissionRate = getLinearDesc(APR).add( getSupplyBasedEmissionRate() ); // if APR=15%, getSupplyBasedEmissionRate=7.5%, userEmissionRate will be 22.5%, userShare > total
-        require(userEmissionRate <= MAX_EMISSION_RATE, "userEmissionRate>MAX_EMISSION_RATE is not allowed");
-        userShare = _amount.mul(userEmissionRate).mul(timePassed).div(YEAR * 1 ether);
-        total =     _amount.mul(MAX_EMISSION_RATE ).mul(timePassed).div(YEAR * 1 ether);
+
+        uint256 _userEmissionRate = userEmissionRate();
+        
+        require(_userEmissionRate <= MAX_EMISSION_RATE, "_userEmissionRate>MAX_EMISSION_RATE is not allowed");
+        userShare = _amount.mul(_userEmissionRate ).mul(timePassed).div(YEAR * 1 ether);
+        if (0==userShare) {
+            total = 0;
+        } else {
+            total = _amount.mul(MAX_EMISSION_RATE).mul(timePassed).div(YEAR * 1 ether);
+        }
     }
 
-    function getSupplyBasedEmissionRate() public view returns (uint256) {
+    function userEmissionRate() public view returns (uint256) {
+        // if basicAPR>=7.5%, because getSupplyBasedEmissionRate<=7.5%, userEmissionRate might > 15%, userShare might > total
+        uint256 _userEmissionRate = basicAPR().add( getSupplyBasedEmissionRate() );
+        
+        // _userEmissionRate should descend by time from startTime
+        uint256 descRate = (block.timestamp.sub(startTime)).mul(monthlyDescRate()).div(30 days);
+        if ( descRate >= 1 ether) {
+            return 0;
+        } 
+        return _userEmissionRate.mul( 1 ether - descRate ).div(1 ether);
+    }
+
+    function getSupplyBasedEmissionRate() public view returns (uint256) { // <=0.75
         uint256 totalSupply = token.totalSupply();
-        uint256 _totalSupplyFactor = getLinearDesc(totalSupplyFactor);
+        uint256 _totalSupplyFactor = totalSupplyFactor();
         if (0==_totalSupplyFactor) {
             return 0;
         }
-        uint256 target = totalSupply.mul(_totalSupplyFactor).div(1 ether); // part of token's totalSupply
+        uint256 target = totalSupply.mul(_totalSupplyFactor).div(1 ether); // a part of token's totalSupply
         uint256 maxSupplyBasedEmissionRate = MAX_EMISSION_RATE.div(2); // MAX_EMISSION_RATE = 0.15 ether
         if (totalStaked >= target) {
-            return maxSupplyBasedEmissionRate;
+            return maxSupplyBasedEmissionRate; // =0.75
         }
-        return maxSupplyBasedEmissionRate.mul(totalStaked).div(target);
+        return maxSupplyBasedEmissionRate.mul(totalStaked).div(target); // <0.75
     }
 
     event onTokenTransfered(address sender, uint256 amount, string callData);

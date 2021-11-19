@@ -11,12 +11,9 @@ contract('Staking', accounts=>{
   const forcedWithdrawalFee = ether('0.03')
   const withdrawalLockDuration = DAY.mul(new BN(2))
   const oneEther = ether('1')
-  const APRInitVal = ether('0.075')
-  const APRMinVal = ether('0.005')
-  const APRDescMonthly = ether('0.005')
-  const totalSupplyFactorInitVal = ether('1')
-  const totalSupplyFactorMinVal = ether('0.1')
-  const totalSupplyFactorDescMonthly = ether('0.1')
+  const basicAPR = ether('0.075')
+  const totalSupplyFactor = ether('1')
+  const monthlyDescRate = ether('0.01')
   let token;
   let staking;
   let initializeParams
@@ -35,44 +32,116 @@ contract('Staking', accounts=>{
       forcedWithdrawalFee,
       withdrawalLockDuration,
       LPRewardAddress,
-      APRInitVal,
-      APRMinVal,
-      APRDescMonthly,
-      totalSupplyFactorInitVal,
-      totalSupplyFactorMinVal,
-      totalSupplyFactorDescMonthly
+      totalSupplyFactor,
+      basicAPR,
+      monthlyDescRate
     ]
   })
 
-  describe('PARAM_UPDATE_DELAY', async ()=>{
-    // LPRewardAddress/forcedWithdrawalFee/withdrawalLockDuration
+  function getAccruedEmission(timePassed, userEmissionRate, amount) {
+    if (timePassed.eq(new BN(0)) || amount.eq(new BN(0))) {
+      return {total: new BN(0), userShare: new BN(0)}
+    }
+    const userShare = amount.mul(userEmissionRate ).mul(timePassed).div(YEAR.mul(oneEther))
+    let total = amount.mul(MAX_EMISSION_RATE).mul(timePassed).div(YEAR.mul(oneEther))
+    if (userShare.eq(new BN(0))) {
+      total = new BN(0)
+    }
+    return {total: total, userShare: userShare}
+  }
+
+  function userEmissionRate(basicAPR, supplyBasedEmissionRate, blockTime, startTime, monthlyDescRate) {
+      let _userEmissionRate = basicAPR.add(supplyBasedEmissionRate)
+      const descRate = (blockTime.sub(startTime)).mul(monthlyDescRate).div(DAY.mul(new BN(30)))
+      // console.log('descRate', descRate.toString())
+      if (descRate.gte(oneEther)) {
+        return new BN(0)
+      }
+      // console.log('oneEther.sub(descRate)', oneEther.sub(descRate).toString() )
+      const returnData = _userEmissionRate.mul( oneEther.sub(descRate) ).div(oneEther)
+      // console.log('returnData', returnData)
+      return returnData
+  }
+
+  function getSupplyBasedEmissionRate(totalSupply, totalSupplyFactor, totalStaked) {
+    if (totalSupplyFactor.eq(new BN(0))) {
+        return 0;
+    }
+    const target = totalSupply.mul(totalSupplyFactor).div(oneEther); // part of token's totalSupply
+    const maxSupplyBasedEmissionRate = MAX_EMISSION_RATE.div(new BN(2)); // MAX_EMISSION_RATE = 0.15 ether
+    if (totalStaked.gte(target)) {
+        return maxSupplyBasedEmissionRate;
+    }
+    return maxSupplyBasedEmissionRate.mul(totalStaked).div(target);
+  }
+  
+  describe('Withdraw', async ()=>{
+    let startTime
     beforeEach(async ()=>{
       await initialize(initializeParams)
+      startTime = await staking.startTime()
     })
-    it('Should not change before PARAM_UPDATE_DELAY reached and change after reached', async ()=>{
-      const resLP = await staking.setLPRewardAddress(user2)
-      expectEvent(resLP, 'LPRewardAddressSet', {value: user2, sender: owner})
-      assert(user2!==(await staking.LPRewardAddress()))
-      await time.increase(PARAM_UPDATE_DELAY)
-      assert(user2===(await staking.LPRewardAddress()))
+    it('Should minus fee if lockDuration not reached and 0 fee if lockDuration reached and emission is correct', async ()=>{
+      const totalSupplyFactor = await staking.totalSupplyFactor()
+      const monthlyDescRate = await staking.monthlyDescRate()
+      const receipt = await staking.deposit(oneEther.mul(new BN(2)), {from: user1})
+      // console.log('token.balanceOf(staking.address)', (await token.balanceOf(staking.address)).toString()); return
+      assert(oneEther.mul(new BN(2)).eq(await token.balanceOf(staking.address)))
+      const depositDate1 = await staking.depositDates(user1)
+      const totalSupply1 = await token.totalSupply()
+      const totalStaked1 = await staking.totalStaked()
+      const LPbalance1 = await token.balanceOf(LPRewardAddress)
+      await time.increase( (await staking.withdrawalLockDuration()).div(new BN(2)) )
+      const timeBefore = getBlockTimestamp(receipt)
+      const resWithdraw = await staking.withdraw(oneEther, {from: user1})
+      assert(oneEther.eq(await token.balanceOf(staking.address)))
+      const LPbalance2 = await token.balanceOf(LPRewardAddress)
+      const withdrawDate = await getBlockTimestamp(resWithdraw)
+      const depositDuration = withdrawDate.sub(depositDate1)
+      const supplyBasedEmissionRate = getSupplyBasedEmissionRate(totalSupply1, totalSupplyFactor, totalStaked1)
+      const _userEmissionRate = userEmissionRate(basicAPR, supplyBasedEmissionRate, withdrawDate, startTime, monthlyDescRate)
+      const accruedEmission = getAccruedEmission(depositDuration, _userEmissionRate, oneEther)
+      const fee = oneEther.add(accruedEmission.userShare).mul(await staking.forcedWithdrawalFee()).div(oneEther)
+      assert(LPbalance2.eq(accruedEmission.total.sub(accruedEmission.userShare).add(fee)))
+      expectEvent(resWithdraw, 'Withdrawn', {
+        sender: user1,
+        amount: oneEther.add(accruedEmission.userShare).sub(fee),
+        lastDepositDuration: withdrawDate.sub(depositDate1),
+        fee: fee,
+        balance: oneEther,
+        accruedEmission: accruedEmission.userShare
+      })
+  
+      const depositDate2 = await staking.depositDates(user1)
+      const totalSupply2 = await token.totalSupply()
+      const totalStaked2 = await staking.totalStaked()
+      await time.increase( (await staking.withdrawalLockDuration()).div(new BN(2)) )
+      const resWithdraw2 = await staking.withdraw(oneEther, {from: user1})
+      const timeBefore2 = await getBlockTimestamp(resWithdraw2)
+      assert((new BN(0)).eq(await token.balanceOf(staking.address)))
+      const LPbalance3 = await token.balanceOf(LPRewardAddress)
+      const withdrawDate2 = await getBlockTimestamp(resWithdraw2)
+      const depositDuration2 = withdrawDate2.sub(depositDate2)
+      const supplyBasedEmissionRate2 = getSupplyBasedEmissionRate(totalSupply2, totalSupplyFactor, totalStaked2)
+      const _userEmissionRate2 = userEmissionRate(basicAPR, supplyBasedEmissionRate2, timeBefore2, startTime, monthlyDescRate)
+      const accruedEmission2 = getAccruedEmission(depositDuration2, _userEmissionRate2, oneEther)
+      assert(LPbalance3.eq(LPbalance2.add(accruedEmission2.total).sub(accruedEmission2.userShare)))
+      const amount = oneEther.add(accruedEmission2.userShare)
+      expectEvent(resWithdraw2, 'Withdrawn', {
+        sender: user1,
+        amount: amount,
+        lastDepositDuration: depositDuration2,
+        fee: new BN(0),
+        balance: new BN(0),
+        accruedEmission: accruedEmission2.userShare
+      })
 
-      const oneBN = new BN(1)
-
-      const resForce = await staking.setForcedWithdrawalFee(oneBN)
-      expectEvent(resForce, 'ForcedWithdrawalFeeSet', {value: new BN(1), sender: owner})
-      assert(!oneBN.eq(await staking.forcedWithdrawalFee()))
-      await time.increase(PARAM_UPDATE_DELAY)
-      assert(oneBN.eq(await staking.forcedWithdrawalFee()))
-
-      const resLock = await staking.setWithdrawalLockDuration(oneBN)
-      expectEvent(resLock, 'WithdrawalLockDurationSet', {value: new BN(1), sender: owner})
-      assert(!oneBN.eq(await staking.withdrawalLockDuration()))
-      await time.increase(PARAM_UPDATE_DELAY)
-      assert(oneBN.eq(await staking.withdrawalLockDuration()))
+      await time.increase(YEAR.mul(new BN(10)))
+      // withdraw again, test if userEmission is 0
     })
   })
 
-  describe('deposit', ()=>{
+  describe('Deposit', ()=>{
     beforeEach(async ()=>{
       await initialize(initializeParams)
     })
@@ -88,20 +157,38 @@ contract('Staking', accounts=>{
         accruedEmission: new BN(0),
         prevDepositDuration: new BN(0)
       })
+
+      const startTime = await staking.startTime()
+      const monthlyDescRate = await staking.monthlyDescRate()
+      // console.log('monthlyDescRate', monthlyDescRate.toString()); return
+      const totalSupplyFactor = await staking.totalSupplyFactor()
+      const basicAPR = await staking.basicAPR()
+      // console.log('basicAPR', basicAPR.toString()); return
+
       const timeBefore = await getBlockTimestamp(res1)
       await time.increase(DAY.mul(new BN(2)))
+      
       const totalStakedBefore = await staking.totalStaked()
       const totalSupplyBefore = await token.totalSupply()
-      const depositTime = await staking.depositDates(user1)
+      const depositTime1 = await staking.depositDates(user1)
       const balanceBefore = await staking.balances(user1)
+
       const res2 = await staking.deposit(oneEther, {from: user1})
-      const timeAfter = await getBlockTimestamp(res2)
-      const timePassed = timeAfter.sub(depositTime)
-      const APR = getLinearDesc(timeAfter.sub(await staking.startTime()), await staking.APR())
-      const totalSupplyFactor = getLinearDesc(timeAfter.sub(await staking.startTime()), await staking.totalSupplyFactor())
+
+      const blocktimeDeposit2 = await getBlockTimestamp(res2)
+      const timePassed = blocktimeDeposit2.sub(depositTime1)
+      // console.log('timePassed', timePassed.toString()); return
+      
       const supplyBasedEmissionRate = getSupplyBasedEmissionRate(totalSupplyBefore, totalSupplyFactor, totalStakedBefore)
-      const userEmissionRate = APR.add(supplyBasedEmissionRate)
-      const accruedEmission = getAccruedEmission(timePassed, userEmissionRate, balanceBefore)
+      // console.log('supplyBasedEmissionRate', supplyBasedEmissionRate.toString()); return
+
+      const _userEmissionRate = userEmissionRate(basicAPR, supplyBasedEmissionRate, blocktimeDeposit2, startTime, monthlyDescRate)
+      // console.log('_userEmissionRate', _userEmissionRate.toString()); return
+
+      const accruedEmission = getAccruedEmission(timePassed, _userEmissionRate, balanceBefore)
+
+      // console.log(oneEther.add(oneEther).add(accruedEmission.userShare).toString(), (await token.balanceOf(staking.address)).toString() )
+
       assert(oneEther.add(oneEther).add(accruedEmission.userShare).eq(await token.balanceOf(staking.address)))
       assert(accruedEmission.total.sub(accruedEmission.userShare).eq(await token.balanceOf(LPRewardAddress)))
       expectEvent(res2, 'Deposited', {
@@ -111,112 +198,57 @@ contract('Staking', accounts=>{
         accruedEmission: accruedEmission.userShare, // need cauculate
         balance: oneEther.mul(new BN(2)).add(accruedEmission.userShare) // emission should be included
       })
+
+
+      await time.increase(YEAR.mul(new BN(10)))
+      // deposit againt, test if userEmission is 0
     })
   })
 
-  describe('withdraw', async ()=>{
-    let startTime
+  describe('PARAM_UPDATE_DELAY', async ()=>{
     beforeEach(async ()=>{
       await initialize(initializeParams)
-      startTime = await staking.startTime()
     })
-    it('Should minus fee if lockDuration not reached and 0 fee if lockDuration reached and emission is correct', async ()=>{
-      const APRParams = await staking.APR()
-      const totalSupplyFactorParams = await staking.totalSupplyFactor()
-      
-      await staking.deposit(oneEther.mul(new BN(2)), {from: user1})
-      // console.log('token.balanceOf(staking.address)', (await token.balanceOf(staking.address)).toString()); return
-      assert(oneEther.mul(new BN(2)).eq(await token.balanceOf(staking.address)))
-      const depositDate1 = await staking.depositDates(user1)
-      const totalSupply1 = await token.totalSupply()
-      const totalStaked1 = await staking.totalStaked()
-      const LPbalance1 = await token.balanceOf(LPRewardAddress)
-      await time.increase( (await staking.withdrawalLockDuration()).div(new BN(2)) )
-      const resWithdraw = await staking.withdraw(oneEther, {from: user1})
-      assert(oneEther.eq(await token.balanceOf(staking.address)))
-      const LPbalance2 = await token.balanceOf(LPRewardAddress)
-      const withdrawDate = await getBlockTimestamp(resWithdraw)
-      const depositDuration = withdrawDate.sub(depositDate1)
-      const accruedEmission = getAccruedEmissions(
-        withdrawDate, startTime, totalSupply1, totalStaked1, 
-        depositDuration, APRParams, totalSupplyFactorParams
-      )
-      const fee = oneEther.add(accruedEmission.userShare).mul(await staking.forcedWithdrawalFee()).div(oneEther)
-      assert(LPbalance2.eq(accruedEmission.total.sub(accruedEmission.userShare).add(fee)))
-      expectEvent(resWithdraw, 'Withdrawn', {
-        sender: user1,
-        amount: oneEther.add(accruedEmission.userShare).sub(fee),
-        lastDepositDuration: withdrawDate.sub(depositDate1),
-        fee: fee,
-        balance: oneEther,
-        accruedEmission: accruedEmission.userShare
-      })
+    it('Should not change before PARAM_UPDATE_DELAY reached and change after reached', async ()=>{
+      const resLP = await staking.setLPRewardAddress(user2)
+      expectEvent(resLP, 'LPRewardAddressSet', {value: user2, sender: owner})
+      assert(user2!==(await staking.LPRewardAddress()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(user2===(await staking.LPRewardAddress()))
 
-      const depositDate2 = await staking.depositDates(user1)
-      const totalSupply2 = await token.totalSupply()
-      const totalStaked2 = await staking.totalStaked()
-      await time.increase( (await staking.withdrawalLockDuration()).div(new BN(2)) )
-      const resWithdraw2 = await staking.withdraw(oneEther, {from: user1})
-      assert((new BN(0)).eq(await token.balanceOf(staking.address)))
-      const LPbalance3 = await token.balanceOf(LPRewardAddress)
-      const withdrawDate2 = await getBlockTimestamp(resWithdraw2)
-      const depositDuration2 = withdrawDate2.sub(depositDate2)
-      const accruedEmission2 = getAccruedEmissions(
-        withdrawDate2, startTime, totalSupply2, totalStaked2, 
-        depositDuration2, APRParams, totalSupplyFactorParams
-      )
-      assert(LPbalance3.eq(LPbalance2.add(accruedEmission2.total).sub(accruedEmission2.userShare)))
-      const amount = oneEther.add(accruedEmission2.userShare)
-      expectEvent(resWithdraw2, 'Withdrawn', {
-        sender: user1,
-        amount: amount,
-        lastDepositDuration: depositDuration2,
-        fee: new BN(0),
-        balance: new BN(0),
-        accruedEmission: accruedEmission2.userShare
-      })
+      const oneBN = new BN(1)
+
+      const resForce = await staking.setForcedWithdrawalFee(oneBN)
+      expectEvent(resForce, 'ForcedWithdrawalFeeSet', {value: oneBN, sender: owner})
+      assert(!oneBN.eq(await staking.forcedWithdrawalFee()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(oneBN.eq(await staking.forcedWithdrawalFee()))
+
+      const resLock = await staking.setWithdrawalLockDuration(oneBN)
+      expectEvent(resLock, 'WithdrawalLockDurationSet', {value: oneBN, sender: owner})
+      assert(!oneBN.eq(await staking.withdrawalLockDuration()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(oneBN.eq(await staking.withdrawalLockDuration()))
+
+      const resFactor = await staking.setTotalSupplyFactor(oneBN)
+      expectEvent(resFactor, 'TotalSupplyFactorSet', {value: oneBN, sender: owner})
+      assert(!oneBN.eq(await staking.totalSupplyFactor()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(oneBN.eq(await staking.totalSupplyFactor()))
+
+      const resBasic = await staking.setBasicAPR(oneBN)
+      expectEvent(resBasic, 'BasicAPRSet', {value: new BN(1), sender: owner})
+      assert(!oneBN.eq(await staking.basicAPR()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(oneBN.eq(await staking.basicAPR()))
+
+      const resMonthly = await staking.setMonthlyDescRate(oneBN)
+      expectEvent(resMonthly, 'MonthlyDescRateSet', {value: new BN(1), sender: owner})
+      assert(!oneBN.eq(await staking.monthlyDescRate()))
+      await time.increase(PARAM_UPDATE_DELAY)
+      assert(oneBN.eq(await staking.monthlyDescRate()))
     })
   })
-
-  function getAccruedEmissions(
-    blockTime, startTime, totalSupply, totalStaked, 
-    depositDuration, APRParams, totalSupplyFactorParams
-  ) {
-    const APR = getLinearDesc(blockTime.sub(startTime), APRParams)
-    const totalSupplyFactor = getLinearDesc(blockTime.sub(startTime), totalSupplyFactorParams)
-    const supplyBasedEmissionRate = getSupplyBasedEmissionRate(totalSupply, totalSupplyFactor, totalStaked)  
-    const userEmissionRate = APR.add(supplyBasedEmissionRate)
-    return getAccruedEmission(depositDuration, userEmissionRate, oneEther)
-  }
-
-  function getAccruedEmission(timePassed, userEmissionRate, amount) {
-    if (timePassed.eq(new BN(0)) || amount.eq(new BN(0))) {
-      return {total: new BN(0), userShare: new BN(0)}
-    }
-    userShare = amount.mul(userEmissionRate ).mul(timePassed).div(YEAR.mul(oneEther))
-    total =     amount.mul(MAX_EMISSION_RATE).mul(timePassed).div(YEAR.mul(oneEther))
-    return {total: total, userShare: userShare}
-  }
-
-  function getSupplyBasedEmissionRate(totalSupply, totalSupplyFactor, totalStaked) {
-    if (totalSupplyFactor.eq(new BN(0))) {
-        return 0;
-    }
-    const target = totalSupply.mul(totalSupplyFactor).div(oneEther); // part of token's totalSupply
-    const maxSupplyBasedEmissionRate = MAX_EMISSION_RATE.div(new BN(2)); // MAX_EMISSION_RATE = 0.15 ether
-    if (totalStaked.gte(target)) {
-        return maxSupplyBasedEmissionRate;
-    }
-    return maxSupplyBasedEmissionRate.mul(totalStaked).div(target);
-  }
-
-  function getLinearDesc(timePassed, params) { // this timePassed is comparing to startTime
-    const descPerSecond = params.descMonthly.div(new BN(24*3600*30))
-    if ( params.initVal.sub(descPerSecond.mul(timePassed)).gt(params.minVal) ) {
-        return params.initVal.sub(descPerSecond.mul(timePassed));
-    }
-    return params.minVal;
-  }
 
   function initialize(param) {
     return staking.initialize(...param, {gas: 3000000})
@@ -233,14 +265,9 @@ contract('Staking', accounts=>{
       assert(forcedWithdrawalFee.eq(await staking.forcedWithdrawalFee()))
       assert(withdrawalLockDuration.eq(await staking.withdrawalLockDuration()))
       assert(LPRewardAddress===(await staking.LPRewardAddress()))
-      const APR = await staking.APR()
-      assert(APRInitVal.eq(APR.initVal))
-      assert(APRMinVal.eq(APR.minVal))
-      assert(APRDescMonthly.eq(APR.descMonthly))
-      const totalSupplyFactor = await staking.totalSupplyFactor()
-      assert(totalSupplyFactorInitVal.eq(totalSupplyFactor.initVal))
-      assert(totalSupplyFactorMinVal.eq(totalSupplyFactor.minVal))
-      assert(totalSupplyFactorDescMonthly.eq(totalSupplyFactor.descMonthly))
+      assert(totalSupplyFactor.eq(await staking.totalSupplyFactor()))
+      assert(basicAPR.eq(await staking.basicAPR()))
+      assert(monthlyDescRate.eq(await staking.monthlyDescRate()))
       await expectRevert(initialize(initializeParams), 'Initializable: contract is already initialized')
     })
     it('Shold reject if tokenAddress is not a contract', async () => {
@@ -263,13 +290,13 @@ contract('Staking', accounts=>{
       initializeParams[3] = staking.address
       await expectRevert(initialize(initializeParams), 'wrong address')
     })
-    it('Should reject if APR > MAX_EMISSION_RATE/2', async ()=>{
-      initializeParams[4] = MAX_EMISSION_RATE.div(new BN(2)).add(new BN(1))
-      await expectRevert(initialize(initializeParams), '_APRInitVal>MAX_EMISSION_RATE/2 is not allowed')
-    })
-    it('Should reject if TotalSupplyFactor bigger than 1 ether', async ()=>{
-      initializeParams[7] = oneEther.add(new BN(1))
+    it('Should reject if totalSupplyFactor bigger than 1 ether', async ()=>{
+      initializeParams[4] = oneEther.add(new BN(1))
       await expectRevert(initialize(initializeParams), 'should be less than or equal to 1 ether')
+    })
+    it('Should reject if basicAPR bigger than half MAX_EMISSION_RATE', async ()=>{
+      initializeParams[5] = MAX_EMISSION_RATE.div(new BN(2)).add(new BN(1))
+      await expectRevert(initialize(initializeParams), 'should be less than or equal to half MAX_EMISSION_RATE')
     })
   })
 })
