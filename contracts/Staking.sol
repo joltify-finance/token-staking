@@ -251,7 +251,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             return (0, 0, 0);
         }
         uint256 blockTime = block.timestamp;
-        timePassed = _depositDate.sub( startTime ); // return value
+        timePassed = blockTime.sub(_depositDate); // return value
         uint256 _differentialTime = differentialTime();
         uint256 fragments = timePassed.div(differentialTime());
 
@@ -261,10 +261,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 j = 1;
         total = 0; // return value
         for (uint256 i=0; i<=fragments; i++) {
-            uint256 timePoint = startTime.add(_differentialTime.mul(i.add(1)));
-            if ( timePoint==startTime || timePoint>startTime.add(timePassed)) {
-                timePoint = startTime.add(timePassed);
-            }
+            uint256 timePoint = _depositDate.add(_differentialTime.mul(i.add(1)));
 
             if (timePoint > blockTime) {
                 _differentialTime -= timePoint - blockTime;
@@ -286,7 +283,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             }
         }
         userShare = total.mul(0.8 ether).div(ONE_ETHER);
-
     }
 
     event onTokenTransfered(address sender, uint256 amount, string callData);
