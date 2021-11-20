@@ -34,12 +34,18 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 timestamp;
     }
 
+    struct APRHistory {
+        uint256 timestamp;
+        uint256 APR;
+    }
+
     AddressParam public LPRewardAddressParam;
     UintParam public forcedWithdrawalFeeParam;
     UintParam public withdrawalLockDurationParam;
     UintParam public totalSupplyFactorParam;
     UintParam public basicAPRParam;
     UintParam public monthlyDescRateParam;
+    UintParam public differentialTimeParam;
 
     uint256 public startTime; // to calculate APR desc
     uint256 public totalStaked;
@@ -47,8 +53,11 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token;
 
+    APRHistory[] public APRHistories;
+
     uint256 private constant YEAR = 365 days; // https://docs.soliditylang.org/en/v0.8.9/units-and-global-variables.html
-    uint256 public constant MAX_EMISSION_RATE = 0.15 ether;
+    uint256 private constant ONE_ETHER = 1 ether;
+    // uint256 public constant MAX_EMISSION_RATE = 0.15 ether;
     uint256 public constant PARAM_UPDATE_DELAY = 7 days;
 
     function initialize(
@@ -71,6 +80,17 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         startTime = block.timestamp;
     }
 
+    function differentialTime() public view returns (uint256) {
+        return _getUintParamValue(differentialTimeParam);
+    }
+
+    event DifferentialTimeSet(uint256 value, address sender);
+    function setDifferentialTime(uint256 _value) public onlyOwner {
+        require(_value>0, "should be a positive integer");
+        _updateUintParam(differentialTimeParam, _value); // if very large, APR drops very quickly
+        emit DifferentialTimeSet(_value, msg.sender);
+    }
+
     function monthlyDescRate() public view returns (uint256) {
         return _getUintParamValue(monthlyDescRateParam);
     }
@@ -86,9 +106,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     event BasicAPRSet(uint256 value, address sender);
-    function setBasicAPR(uint256 _value) public onlyOwner {
-        require(_value <= MAX_EMISSION_RATE.div(2), "should be less than or equal to half MAX_EMISSION_RATE");
+    function setBasicAPR(uint256 _value) public onlyOwner { // can be any value from 0, even bigger than 100%, for exampel 300%
         _updateUintParam(basicAPRParam, _value);
+        APRHistories.push( APRHistory( {timestamp: block.timestamp, APR: _value} ) );
         emit BasicAPRSet(_value, msg.sender);
     }
 
@@ -228,43 +248,43 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if (0==_depositDate || 0==_amount) {
             return (0, 0, 0);
         }
-        timePassed = block.timestamp.sub( _depositDate );
+        uint256 blockTime = block.timestamp;
+        timePassed = _depositDate.sub( startTime ); // return value
+        uint256 _differentialTime = differentialTime();
+        uint256 fragments = timePassed.div(differentialTime());
 
-        uint256 _userEmissionRate = userEmissionRate();
-        
-        require(_userEmissionRate <= MAX_EMISSION_RATE, "_userEmissionRate>MAX_EMISSION_RATE is not allowed");
-        userShare = _amount.mul(_userEmissionRate ).mul(timePassed).div(YEAR * 1 ether);
-        if (0==userShare) {
-            total = 0;
-        } else {
-            total = _amount.mul(MAX_EMISSION_RATE).mul(timePassed).div(YEAR * 1 ether);
-        }
-    }
+        uint256 _monthlyDescRate = monthlyDescRate();
 
-    function userEmissionRate() public view returns (uint256) {
-        // if basicAPR>=7.5%, because getSupplyBasedEmissionRate<=7.5%, userEmissionRate might > 15%, userShare might > total
-        uint256 _userEmissionRate = basicAPR().add( getSupplyBasedEmissionRate() );
-        
-        // _userEmissionRate should descend by time from startTime
-        uint256 descRate = (block.timestamp.sub(startTime)).mul(monthlyDescRate()).div(30 days);
-        if ( descRate >= 1 ether) {
-            return 0;
-        } 
-        return _userEmissionRate.mul( 1 ether - descRate ).div(1 ether);
-    }
+        uint256 APR = APRHistories[0].APR;
+        uint256 j = 1;
+        total = 0; // return value
+        for (uint256 i=0; i<=fragments; i++) {
+            uint256 timePoint = startTime.add(_differentialTime.mul(i.add(1)));
+            if ( timePoint==startTime || timePoint>startTime.add(timePassed)) {
+                timePoint = startTime.add(timePassed);
+            }
 
-    function getSupplyBasedEmissionRate() public view returns (uint256) { // <=0.75
-        uint256 totalSupply = token.totalSupply();
-        uint256 _totalSupplyFactor = totalSupplyFactor();
-        if (0==_totalSupplyFactor) {
-            return 0;
+            if (timePoint > blockTime) {
+                _differentialTime -= timePoint - blockTime;
+                timePoint = blockTime;
+            }
+
+            uint256 descRate = (timePoint.sub(startTime)).mul(_monthlyDescRate).div(30 days);
+
+            while(APRHistories[j].timestamp>0 &&  timePoint>APRHistories[j].timestamp) {
+                APR = APRHistories[j].APR;
+                j++;
+            }
+
+            if (descRate < 1 ether) {
+                uint256 APRLeft = ONE_ETHER.sub(descRate);
+                total += _differentialTime.mul(APR.mul(APRLeft)).div(YEAR);
+            } else {
+                break;
+            }
         }
-        uint256 target = totalSupply.mul(_totalSupplyFactor).div(1 ether); // a part of token's totalSupply
-        uint256 maxSupplyBasedEmissionRate = MAX_EMISSION_RATE.div(2); // MAX_EMISSION_RATE = 0.15 ether
-        if (totalStaked >= target) {
-            return maxSupplyBasedEmissionRate; // =0.75
-        }
-        return maxSupplyBasedEmissionRate.mul(totalStaked).div(target); // <0.75
+        userShare = total.mul(0.8 ether).div(ONE_ETHER);
+
     }
 
     event onTokenTransfered(address sender, uint256 amount, string callData);
