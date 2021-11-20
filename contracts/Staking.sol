@@ -67,7 +67,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         address _LPRewardAddress,
         uint256 _totalSupplyFactor,
         uint256 _basicAPR,
-        uint256 _monthlyDescRate
+        uint256 _monthlyDescRate,
+        uint256 _differentialTime
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
@@ -77,6 +78,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         setTotalSupplyFactor(_totalSupplyFactor);
         setBasicAPR(_basicAPR);
         setMonthlyDescRate(_monthlyDescRate);
+        setDifferentialTime(_differentialTime);
         startTime = block.timestamp;
     }
 
