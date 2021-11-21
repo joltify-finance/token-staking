@@ -34,73 +34,41 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 timestamp;
     }
 
-    struct APRHistory {
+    struct UintHistory {
         uint256 timestamp;
-        uint256 APR;
+        uint256 value;
     }
 
     AddressParam public LPRewardAddressParam;
     UintParam public forcedWithdrawalFeeParam;
     UintParam public withdrawalLockDurationParam;
-    UintParam public totalSupplyFactorParam;
     UintParam public basicAPRParam;
-    UintParam public monthlyDescRateParam;
-    UintParam public differentialTimeParam;
 
-    uint256 public startTime; // to calculate APR desc
     uint256 public totalStaked;
     mapping(address=>uint256) public balances;
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token;
 
-    APRHistory[] public APRHistories;
+    UintHistory[] public APRHistories;
 
-    uint256 private constant YEAR = 365 days; // https://docs.soliditylang.org/en/v0.8.9/units-and-global-variables.html
+    uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    // uint256 public constant MAX_EMISSION_RATE = 0.15 ether;
     uint256 public constant PARAM_UPDATE_DELAY = 7 days;
+    uint256 public constant USER_SHARE_RATE = 0.8 ether;
 
     function initialize(
         address _tokenAddress,
         uint256 _forcedWithdrawalFee,
         uint256 _withdrawalLockDuration,
         address _LPRewardAddress,
-        uint256 _totalSupplyFactor,
-        uint256 _basicAPR,
-        uint256 _monthlyDescRate,
-        uint256 _differentialTime
+        uint256 _basicAPR
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
         setForcedWithdrawalFee(_forcedWithdrawalFee);
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
-        setTotalSupplyFactor(_totalSupplyFactor);
         setBasicAPR(_basicAPR);
-        setMonthlyDescRate(_monthlyDescRate);
-        setDifferentialTime(_differentialTime);
-        startTime = block.timestamp;
-    }
-
-    function differentialTime() public view returns (uint256) {
-        return _getUintParamValue(differentialTimeParam);
-    }
-
-    event DifferentialTimeSet(uint256 value, address sender);
-    function setDifferentialTime(uint256 _value) public onlyOwner {
-        require(_value>0, "should be a positive integer");
-        _updateUintParam(differentialTimeParam, _value); // if very large, APR drops very quickly
-        emit DifferentialTimeSet(_value, msg.sender);
-    }
-
-    function monthlyDescRate() public view returns (uint256) {
-        return _getUintParamValue(monthlyDescRateParam);
-    }
-
-    event MonthlyDescRateSet(uint256 value, address sender);
-    function setMonthlyDescRate(uint256 _value) public onlyOwner {
-        _updateUintParam(monthlyDescRateParam, _value); // if very large, APR drops very quickly
-        emit MonthlyDescRateSet(_value, msg.sender);
     }
 
     function basicAPR() public view returns (uint256) {
@@ -108,21 +76,14 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     event BasicAPRSet(uint256 value, address sender);
-    function setBasicAPR(uint256 _value) public onlyOwner { // can be any value from 0, even bigger than 100%, for exampel 300%
+    function setBasicAPR(uint256 _value) public onlyOwner { // can be any value from 0, even bigger than 100%, for exampel, 300%
+        uint256 historyTime = block.timestamp;
+        if (basicAPRParam.timestamp > 0) {
+            historyTime += PARAM_UPDATE_DELAY;
+        }
+        APRHistories.push( UintHistory( {timestamp: historyTime, value: _value} ) );
         _updateUintParam(basicAPRParam, _value);
-        APRHistories.push( APRHistory( {timestamp: block.timestamp, APR: _value} ) );
         emit BasicAPRSet(_value, msg.sender);
-    }
-
-    function totalSupplyFactor() public view returns (uint256) {
-        return _getUintParamValue(totalSupplyFactorParam);
-    }
-
-    event TotalSupplyFactorSet(uint256 value, address sender);
-    function setTotalSupplyFactor(uint256 _value) public onlyOwner {
-        require(_value <= 1 ether, "should be less than or equal to 1 ether");
-        _updateUintParam(totalSupplyFactorParam, _value);
-        emit TotalSupplyFactorSet(_value, msg.sender);
     }
 
     event WithdrawalLockDurationSet(uint256 value, address sender);
@@ -138,7 +99,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     event ForcedWithdrawalFeeSet(uint256 value, address sender);
     function setForcedWithdrawalFee(uint256 _value) public onlyOwner {
-        require(_value <= 1 ether, "should be less than or equal to 1 ether");
+        require(_value <= ONE_ETHER, "should be less than or equal to 1 ether");
         _updateUintParam(forcedWithdrawalFeeParam, _value);
         emit ForcedWithdrawalFeeSet(_value, msg.sender);
     }
@@ -224,7 +185,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         totalStaked = totalStaked.sub(amount);
         uint256 fee = 0;
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
-            fee = amount.mul(forcedWithdrawalFee()).div(1 ether);
+            fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
             amount = amount.sub( fee );
             require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
         }
@@ -250,44 +211,43 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if (0==_depositDate || 0==_amount) {
             return (0, 0, 0);
         }
-        uint256 blockTime = block.timestamp;
-        timePassed = blockTime.sub(_depositDate); // return value
-        uint256 _differentialTime = differentialTime();
-        uint256 fragments = timePassed.div(differentialTime());
+        uint256 currentTime = block.timestamp;
+        timePassed = currentTime.sub(_depositDate); // return value
 
-        uint256 _monthlyDescRate = monthlyDescRate();
+        uint256[] memory timePoints = new uint256[](APRHistories.length.add(1));
+        uint256 timePointsIndex = 0;
+        timePoints[timePointsIndex] = _depositDate;
+        timePointsIndex ++;
 
-        uint256 APR = APRHistories[0].APR;
-        uint256 j = 1;
-        total = 0; // return value
-        for (uint256 i=0; i<=fragments; i++) {
-            uint256 timePoint = _depositDate.add(_differentialTime.mul(i.add(1)));
+        uint256[] memory APRs = new uint256[](APRHistories.length);
+        uint256 APRsIndex = 0;
+        APRs[APRsIndex] = APRHistories[0].value;
+        APRsIndex ++;
 
-            if (timePoint > blockTime) {
-                _differentialTime -= timePoint - blockTime;
-                timePoint = blockTime;
-            }
-
-            uint256 descRate = (timePoint.sub(startTime)).mul(_monthlyDescRate).div(30 days);
-
-            while(APRHistories[j].timestamp>0 &&  timePoint>APRHistories[j].timestamp) {
-                APR = APRHistories[j].APR;
-                j++;
-            }
-
-            if (descRate < 1 ether) {
-                uint256 APRLeft = ONE_ETHER.sub(descRate);
-                total += _differentialTime.mul(APR.mul(APRLeft)).div(YEAR);
-            } else {
-                break;
+        for(uint256 i=1; i<APRHistories.length; i++) {
+            if (APRHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, APRHistories[i].timestamp might be the future time
+                if (APRHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
+                    timePoints[timePointsIndex] = APRHistories[i].timestamp;
+                    timePointsIndex ++;
+                    APRs[APRsIndex] = APRHistories[i].value;
+                    APRsIndex++;
+                } else { // i is within the length of APRHistories, APRHistories[i].value will always be positive number
+                    APRs[0] = APRHistories[i].value;
+                }
             }
         }
-        userShare = total.mul(0.8 ether).div(ONE_ETHER);
-    }
-
-    event onTokenTransfered(address sender, uint256 amount, string callData);
-    function onTokenTransfer(address _sender, uint256 _amount, bytes memory _calldata) external returns (bool) {
-        emit onTokenTransfered(_sender, _amount, string(_calldata));
-        return true;
+        timePoints[timePointsIndex] = currentTime;
+        timePointsIndex++;
+        for (uint256 j=0; j<timePointsIndex.sub(1); j++) {
+            uint256 emission;
+            {
+                emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(APRs[j]);
+            }
+            {
+                emission = emission.div(YEAR).div(ONE_ETHER);
+            }
+            total = total.add(emission);
+        }
+        userShare = total.mul(USER_SHARE_RATE).div(ONE_ETHER); // return value
     }
 }
