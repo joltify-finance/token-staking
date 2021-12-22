@@ -11,6 +11,8 @@ Joltify Token Stking was audited by CertiK. You can find the audit report [here]
 * Clone the repo and then install dependencies:
 ```shell
 $ npm i
+$ npm i truffle -g
+$ npm install @truffle/hdwallet-provider
 ```
 * Create a file named `.privateKey` in the root path, paste your test private key of bsc testnet in it
 ## Testing
@@ -29,4 +31,6 @@ $ truffle compile
 ```shell
 $ truffle migrate --reset --network bscTestnet
 ```
+* Set token's minter to this contract address
+
 More about truffle commands [here](https://trufflesuite.com/docs/truffle/overview)
