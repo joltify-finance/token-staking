@@ -48,9 +48,9 @@ contract('Staking', accounts=>{
       // set APR to 0
       await staking.setBasicAPR(0);
       // wait for new APR update
-      await time.increase( await staking.PARAM_UPDATE_DELAY() )
+      const PARAM_UPDATE_DELAY = await staking.PARAM_UPDATE_DELAY()
+      await time.increase( withdrawalLockDuration.add(PARAM_UPDATE_DELAY) ) // plus withdrawalLockDuration to avoid the forced withdrawal fee
       console.log('APR2', (await staking.basicAPR()).toString()) // 0
-      // await time.increase( 24*3600*7 )
       
       // now APR is 0, withdraw 1 ether and record the emission1
       const balanceBeforeWithdraw1 = await token.balanceOf(user1)
@@ -87,8 +87,6 @@ contract('Staking', accounts=>{
       assert(LPShare1.eq(LPShare2))
     })
 
-    return
-
     it('APR is 0, emission will also be 0', async ()=>{
       await staking.setBasicAPR(0);
       await time.increase( await staking.PARAM_UPDATE_DELAY() )
@@ -106,8 +104,6 @@ contract('Staking', accounts=>{
       assert((new BN(0)).eq(await token.balanceOf(LPRewardAddress))) // no emission to reward
     })
   })
-
-  return
 
   describe('Withdraw', async ()=>{
     beforeEach(async ()=>{ // must use (), not "_" after async
