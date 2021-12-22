@@ -13,6 +13,7 @@ Joltify Token Stking was audited by CertiK. You can find the audit report [here]
 $ npm i
 $ npm i truffle -g
 $ npm install @truffle/hdwallet-provider
+$ npm install @openzeppelin/test-helpers
 ```
 * Create a file named `.privateKey` in the root path, paste your test private key of bsc testnet in it
 ## Testing
