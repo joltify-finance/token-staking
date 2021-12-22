@@ -53,8 +53,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 7 days;
+    uint256 public constant PARAM_UPDATE_DELAY = 300;
     uint256 public constant USER_SHARE_RATE = 0.8 ether;
+    uint256 public constant withdrawalAllowTime = 1644451200; // 2022-02-10
 
     function initialize(
         address _tokenAddress,
@@ -176,6 +177,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 lastDepositDuration
     );
     function withdraw(uint256 _amount) public nonReentrant {
+        require(block.timestamp>withdrawalAllowTime);
         address _sender = msg.sender;
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
