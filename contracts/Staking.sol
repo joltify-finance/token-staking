@@ -42,14 +42,14 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     AddressParam public LPRewardAddressParam;
     UintParam public forcedWithdrawalFeeParam;
     UintParam public withdrawalLockDurationParam;
-    UintParam public basicAPRParam;
+    UintParam public dailyMintParam;
 
     uint256 public totalStaked;
     mapping(address=>uint256) public balances;
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token;
 
-    UintHistory[] public APRHistories;
+    UintHistory[] public dailyMintHistories;
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
@@ -62,7 +62,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 _forcedWithdrawalFee,
         uint256 _withdrawalLockDuration,
         address _LPRewardAddress,
-        uint256 _basicAPR,
+        uint256 _dailyMint,
         bool _withdrawalLocked
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
@@ -70,23 +70,23 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         setForcedWithdrawalFee(_forcedWithdrawalFee);
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
-        setBasicAPR(_basicAPR);
+        setDailyMint(_dailyMint);
         withdrawalLocked = _withdrawalLocked;
     }
 
-    function basicAPR() public view returns (uint256) {
-        return _getUintParamValue(basicAPRParam);
+    function dailyMint() public view returns (uint256) {
+        return _getUintParamValue(dailyMintParam);
     }
 
-    event BasicAPRSet(uint256 value, address sender);
-    function setBasicAPR(uint256 _value) public onlyOwner { // can be any value from 0, even bigger than 100%, for exampel, 300%
+    event DailyMintSet(uint256 value, address sender);
+    function setDailyMint(uint256 _value) public onlyOwner { // can be any value from 0
         uint256 historyTime = block.timestamp;
-        if (basicAPRParam.timestamp > 0) {
+        if (dailyMintParam.timestamp > 0) {
             historyTime += PARAM_UPDATE_DELAY;
         }
-        APRHistories.push( UintHistory( {timestamp: historyTime, value: _value} ) );
-        _updateUintParam(basicAPRParam, _value);
-        emit BasicAPRSet(_value, msg.sender);
+        dailyMintHistories.push( UintHistory( {timestamp: historyTime, value: _value} ) );
+        _updateUintParam(dailyMintParam, _value);
+        emit DailyMintSet(_value, msg.sender);
     }
 
     event WithdrawalLockDurationSet(uint256 value, address sender);
@@ -222,25 +222,25 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 currentTime = block.timestamp;
         timePassed = currentTime.sub(_depositDate); // return value
 
-        uint256[] memory timePoints = new uint256[](APRHistories.length.add(1));
+        uint256[] memory timePoints = new uint256[](dailyMintHistories.length.add(1));
         uint256 timePointsIndex = 0;
         timePoints[timePointsIndex] = _depositDate;
         timePointsIndex ++;
 
-        uint256[] memory APRs = new uint256[](APRHistories.length);
-        uint256 APRsIndex = 0;
-        APRs[APRsIndex] = APRHistories[0].value;
-        APRsIndex ++;
+        uint256[] memory dailyMints = new uint256[](dailyMintHistories.length);
+        uint256 dailyMintsIndex = 0;
+        dailyMints[dailyMintsIndex] = dailyMintHistories[0].value;
+        dailyMintsIndex ++;
 
-        for(uint256 i=1; i<APRHistories.length; i++) {
-            if (APRHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, APRHistories[i].timestamp might be the future time
-                if (APRHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
-                    timePoints[timePointsIndex] = APRHistories[i].timestamp;
+        for(uint256 i=1; i<dailyMintHistories.length; i++) {
+            if (dailyMintHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, dailyMintHistories[i].timestamp might be the future time
+                if (dailyMintHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
+                    timePoints[timePointsIndex] = dailyMintHistories[i].timestamp;
                     timePointsIndex ++;
-                    APRs[APRsIndex] = APRHistories[i].value;
-                    APRsIndex++;
-                } else { // i is within the length of APRHistories, APRHistories[i].value will always be positive number
-                    APRs[0] = APRHistories[i].value;
+                    dailyMints[dailyMintsIndex] = dailyMintHistories[i].value;
+                    dailyMintsIndex++;
+                } else { // i is within the length of dailyMintHistories, dailyMintHistories[i].value will always be positive number
+                    dailyMints[0] = dailyMintHistories[i].value;
                 }
             }
         }
@@ -249,10 +249,10 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         for (uint256 j=0; j<timePointsIndex.sub(1); j++) {
             uint256 emission;
             {
-                emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(APRs[j]);
+                emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(dailyMints[j]);
             }
             {
-                emission = emission.div(YEAR).div(ONE_ETHER);
+                emission = emission.div(1 days).div(totalStaked);
             }
             total = total.add(emission);
         }
