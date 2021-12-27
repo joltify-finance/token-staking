@@ -36,7 +36,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     struct UintHistory {
         uint256 timestamp;
-        uint256 value;
+        uint256 dailyMint;
+        uint256 totalStaked;
     }
 
     AddressParam public LPRewardAddressParam;
@@ -49,7 +50,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token;
 
-    UintHistory[] public dailyMintHistories;
+    UintHistory[] public dailyMintAndTotalStakedHistories;
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
@@ -84,7 +85,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if (dailyMintParam.timestamp > 0) {
             historyTime += PARAM_UPDATE_DELAY;
         }
-        dailyMintHistories.push( UintHistory( {timestamp: historyTime, value: _value} ) );
+        // every time dailyMint set, record the totalStaked
+        dailyMintAndTotalStakedHistories.push( UintHistory( {timestamp: historyTime, dailyMint: _value, totalStaked: totalStaked} ) );
         _updateUintParam(dailyMintParam, _value);
         emit DailyMintSet(_value, msg.sender);
     }
@@ -165,6 +167,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 newBalance = balances[_sender].add(_amount);
         balances[_sender] = newBalance;
         totalStaked = totalStaked.add(_amount);
+        updateTotalStakedHistory();
         depositDates[_sender] = block.timestamp;
         require(token.transferFrom(_sender, address(this), _amount), "transfer failed");
         emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
@@ -191,6 +194,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         amount = amount.add(accruedEmission); // withdraw emission together
         balances[_sender] = balances[_sender].sub(amount);
         totalStaked = totalStaked.sub(amount);
+        updateTotalStakedHistory();
         uint256 fee = 0;
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
@@ -209,10 +213,15 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             token.mint(address(this), total);
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
+            updateTotalStakedHistory();
             require(userShare<total, "userShare>=total is not allowed");
             require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
         }
         return (userShare, timePassed);
+    }
+
+    function updateTotalStakedHistory() internal {
+        dailyMintAndTotalStakedHistories[dailyMintAndTotalStakedHistories.length.sub(1)].totalStaked = totalStaked;
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
@@ -222,25 +231,29 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 currentTime = block.timestamp;
         timePassed = currentTime.sub(_depositDate); // return value
 
-        uint256[] memory timePoints = new uint256[](dailyMintHistories.length.add(1));
+        uint256[] memory timePoints = new uint256[](dailyMintAndTotalStakedHistories.length.add(1));
         uint256 timePointsIndex = 0;
         timePoints[timePointsIndex] = _depositDate;
         timePointsIndex ++;
 
-        uint256[] memory dailyMints = new uint256[](dailyMintHistories.length);
+        uint256[] memory dailyMints = new uint256[](dailyMintAndTotalStakedHistories.length);
+        uint256[] memory totalStakeds = new uint256[](dailyMintAndTotalStakedHistories.length);
         uint256 dailyMintsIndex = 0;
-        dailyMints[dailyMintsIndex] = dailyMintHistories[0].value;
+        dailyMints[dailyMintsIndex] = dailyMintAndTotalStakedHistories[0].dailyMint;
+        totalStakeds[dailyMintsIndex] = dailyMintAndTotalStakedHistories[0].totalStaked;
         dailyMintsIndex ++;
 
-        for(uint256 i=1; i<dailyMintHistories.length; i++) {
-            if (dailyMintHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, dailyMintHistories[i].timestamp might be the future time
-                if (dailyMintHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
-                    timePoints[timePointsIndex] = dailyMintHistories[i].timestamp;
+        for(uint256 i=1; i<dailyMintAndTotalStakedHistories.length; i++) {
+            if (dailyMintAndTotalStakedHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, dailyMintHistories[i].timestamp might be the future time
+                if (dailyMintAndTotalStakedHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
+                    timePoints[timePointsIndex] = dailyMintAndTotalStakedHistories[i].timestamp;
                     timePointsIndex ++;
-                    dailyMints[dailyMintsIndex] = dailyMintHistories[i].value;
+                    dailyMints[dailyMintsIndex] = dailyMintAndTotalStakedHistories[i].dailyMint;
+                    totalStakeds[dailyMintsIndex] = dailyMintAndTotalStakedHistories[i].totalStaked;
                     dailyMintsIndex++;
                 } else { // i is within the length of dailyMintHistories, dailyMintHistories[i].value will always be positive number
-                    dailyMints[0] = dailyMintHistories[i].value;
+                    dailyMints[0] = dailyMintAndTotalStakedHistories[i].dailyMint;
+                    totalStakeds[0] = dailyMintAndTotalStakedHistories[i].totalStaked;
                 }
             }
         }
@@ -252,7 +265,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
                 emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(dailyMints[j]);
             }
             {
-                emission = emission.div(1 days).div(totalStaked);
+                emission = emission.div(1 days).div(totalStakeds[j]);
             }
             total = total.add(emission);
         }
