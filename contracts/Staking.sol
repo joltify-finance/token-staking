@@ -75,6 +75,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         withdrawalLocked = _withdrawalLocked;
     }
 
+    // return new value after PARAM_UPDATE_DELAY
     function dailyMint() public view returns (uint256) {
         return _getUintParamValue(dailyMintParam);
     }
@@ -83,7 +84,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     function setDailyMint(uint256 _value) public onlyOwner { // can be any value from 0
         uint256 historyTime = block.timestamp;
         if (dailyMintParam.timestamp > 0) {
-            historyTime += PARAM_UPDATE_DELAY;
+            historyTime += PARAM_UPDATE_DELAY; // need to wait PARAM_UPDATE_DELAY to be effictive
         }
         // every time dailyMint set, record the totalStaked
         dailyMintAndTotalStakedHistories.push( UintHistory( {timestamp: historyTime, dailyMint: _value, totalStaked: totalStaked} ) );
@@ -199,6 +200,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
             amount = amount.sub( fee );
+            // if reward > 0
             require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
         }
         require(token.transfer(_sender, amount), "transfer failed");
@@ -215,6 +217,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             totalStaked = totalStaked.add(userShare);
             updateTotalStakedHistory();
             require(userShare<total, "userShare>=total is not allowed");
+            // if reward > 0
             require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
         }
         return (userShare, timePassed);
