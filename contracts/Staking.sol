@@ -53,8 +53,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 300;
-    uint256 public constant USER_SHARE_RATE = 0.8 ether;
+    uint256 public constant PARAM_UPDATE_DELAY = 4 days;
+    uint256 public constant USER_SHARE_RATE = 1 ether;
     bool public withdrawalLocked;
 
     function initialize(
@@ -195,7 +195,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
             amount = amount.sub( fee );
-            require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
+            if (fee>0) {
+                require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
+            }
         }
         require(token.transfer(_sender, amount), "transfer failed");
         emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
@@ -209,8 +211,10 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             token.mint(address(this), total);
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
-            require(userShare<total, "userShare>=total is not allowed");
-            require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
+            require(userShare<=total, "userShare>total is not allowed");
+            if (total>userShare) {
+                require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
+            }
         }
         return (userShare, timePassed);
     }
