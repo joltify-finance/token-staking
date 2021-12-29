@@ -200,8 +200,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
             amount = amount.sub( fee );
-            // if reward > 0
-            require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
+            if (fee>0) {
+                require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
+            }
         }
         require(token.transfer(_sender, amount), "transfer failed");
         emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
@@ -216,9 +217,11 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
             updateTotalStakedHistory();
-            require(userShare<total, "userShare>=total is not allowed");
+            require(userShare<=total, "userShare>total is not allowed");
             // if reward > 0
-            require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
+            if (total>userShare) {
+                require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
+            }
         }
         return (userShare, timePassed);
     }
