@@ -54,8 +54,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 300;
-    uint256 public constant USER_SHARE_RATE = 0.8 ether;
+    uint256 public constant PARAM_UPDATE_DELAY = 4 days;
+    uint256 public constant USER_SHARE_RATE = 0.9 ether;
     bool public withdrawalLocked;
 
     function initialize(
@@ -168,7 +168,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 newBalance = balances[_sender].add(_amount);
         balances[_sender] = newBalance;
         totalStaked = totalStaked.add(_amount);
-        updateTotalStakedHistory();
         depositDates[_sender] = block.timestamp;
         require(token.transferFrom(_sender, address(this), _amount), "transfer failed");
         emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
@@ -195,7 +194,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         amount = amount.add(accruedEmission); // withdraw emission together
         balances[_sender] = balances[_sender].sub(amount);
         totalStaked = totalStaked.sub(amount);
-        updateTotalStakedHistory();
         uint256 fee = 0;
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
@@ -216,7 +214,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             token.mint(address(this), total);
             balances[_user] = currentBalance.add(userShare);
             totalStaked = totalStaked.add(userShare);
-            updateTotalStakedHistory();
             require(userShare<=total, "userShare>total is not allowed");
             // if reward > 0
             if (total>userShare) {
@@ -224,10 +221,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             }
         }
         return (userShare, timePassed);
-    }
-
-    function updateTotalStakedHistory() internal {
-        dailyMintAndTotalStakedHistories[dailyMintAndTotalStakedHistories.length.sub(1)].totalStaked = totalStaked;
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
@@ -238,34 +231,34 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         timePassed = currentTime.sub(_depositDate); // return value
 
         uint256[] memory timePoints = new uint256[](dailyMintAndTotalStakedHistories.length.add(1));
-        uint256 timePointsIndex = 0;
-        timePoints[timePointsIndex] = _depositDate;
-        timePointsIndex ++;
-
         uint256[] memory dailyMints = new uint256[](dailyMintAndTotalStakedHistories.length);
         uint256[] memory totalStakeds = new uint256[](dailyMintAndTotalStakedHistories.length);
-        uint256 dailyMintsIndex = 0;
-        dailyMints[dailyMintsIndex] = dailyMintAndTotalStakedHistories[0].dailyMint;
-        totalStakeds[dailyMintsIndex] = dailyMintAndTotalStakedHistories[0].totalStaked;
-        dailyMintsIndex ++;
+        uint256 index = 0;
+        timePoints[index] = _depositDate;
+        dailyMints[index] = dailyMintAndTotalStakedHistories[0].dailyMint;
+        totalStakeds[index] = dailyMintAndTotalStakedHistories[0].totalStaked;
+        index++;
 
-        for(uint256 i=1; i<dailyMintAndTotalStakedHistories.length; i++) {
-            if (dailyMintAndTotalStakedHistories[i].timestamp < currentTime) { // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, dailyMintHistories[i].timestamp might be the future time
-                if (dailyMintAndTotalStakedHistories[i].timestamp>timePoints[timePointsIndex.sub(1)]) {
-                    timePoints[timePointsIndex] = dailyMintAndTotalStakedHistories[i].timestamp;
-                    timePointsIndex ++;
-                    dailyMints[dailyMintsIndex] = dailyMintAndTotalStakedHistories[i].dailyMint;
-                    totalStakeds[dailyMintsIndex] = dailyMintAndTotalStakedHistories[i].totalStaked;
-                    dailyMintsIndex++;
-                } else { // i is within the length of dailyMintHistories, dailyMintHistories[i].value will always be positive number
+        for (uint256 i=1; i<dailyMintAndTotalStakedHistories.length; i++) {
+            // APR set update need wait until PARAM_UPDATE_DELAY pass, thus, dailyMintHistories[i].timestamp might greate than currentTime
+            if (dailyMintAndTotalStakedHistories[i].timestamp < currentTime) {
+                if (dailyMintAndTotalStakedHistories[i].timestamp > _depositDate) {
+                    timePoints[index] = dailyMintAndTotalStakedHistories[i].timestamp;
+                    dailyMints[index] = dailyMintAndTotalStakedHistories[i].dailyMint;
+                    totalStakeds[index] = dailyMintAndTotalStakedHistories[i].totalStaked;
+                    index++;
+                } else { // dailyMint closest to _depositDate to be the first one
                     dailyMints[0] = dailyMintAndTotalStakedHistories[i].dailyMint;
                     totalStakeds[0] = dailyMintAndTotalStakedHistories[i].totalStaked;
                 }
             }
+            if (i==dailyMintAndTotalStakedHistories.length.sub(1)) { // last one of dailyMintAndTotalStakedHistories
+                totalStakeds[index.sub(1)] = totalStaked;
+            }
         }
-        timePoints[timePointsIndex] = currentTime;
-        timePointsIndex++;
-        for (uint256 j=0; j<timePointsIndex.sub(1); j++) {
+        timePoints[index] = currentTime;
+        
+        for (uint256 j=0; j<index; j++) {
             uint256 emission;
             {
                 emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(dailyMints[j]);
