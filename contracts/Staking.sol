@@ -224,7 +224,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
-        if (0==_depositDate || 0==_amount) {
+        if (0==_depositDate || 0==_amount || 0==totalStaked) { // if totalStaked equils 0, no need to calculate
             return (0, 0, 0);
         }
         uint256 currentTime = block.timestamp;
@@ -252,12 +252,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
                     totalStakeds[0] = dailyMintAndTotalStakedHistories[i].totalStaked;
                 }
             }
-            if (i==dailyMintAndTotalStakedHistories.length.sub(1)) { // last one of dailyMintAndTotalStakedHistories
-                totalStakeds[index.sub(1)] = totalStaked;
-            }
         }
+        totalStakeds[index.sub(1)] = totalStaked; // index must bigger than 1 here
         timePoints[index] = currentTime;
-        
         for (uint256 j=0; j<index; j++) {
             uint256 emission;
             {
