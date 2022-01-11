@@ -10,7 +10,8 @@ contract('Staking', accounts=>{
   const forcedWithdrawalFee = ether('0.03')
   const withdrawalLockDuration = DAY.mul(new BN(2))
   const oneEther = ether('1')
-  const basicAPR = ether('1.5') // 150%
+  // const basicAPR = ether('1.5') // 150%
+  const dailyMint = ether('86400')
   const withdrawalLocked = false
   let token;
   let staking;
@@ -30,15 +31,41 @@ contract('Staking', accounts=>{
       forcedWithdrawalFee,
       withdrawalLockDuration,
       LPRewardAddress,
-      basicAPR,
+      dailyMint,
       withdrawalLocked
     ]
+  })
+
+  describe('Emission error when dailyMintHistory length > 1', async()=>{
+    beforeEach(async ()=>{ // must use (), not "_" after async
+      await initialize(initializeParams)
+    })
+
   })
 
   describe('Emission', async ()=>{
     beforeEach(async ()=>{ // must use (), not "_" after async
       await initialize(initializeParams)
     })
+
+    it('Emission error when dailyMintHistory length > 1', async ()=>{
+      const depositAmount = oneEther.mul(new BN(10000))
+      // deposit
+      const depositRes = await staking.deposit(depositAmount, {from: user1})
+      const depositTime = await getBlockTimestamp(depositRes)
+      // timepass, get emission
+      await time.increase( 600 )
+      const emission1 = await staking.getAccruedEmission(depositTime, depositAmount)
+      // console.log('emission1', emission1.userShare.toString())
+      // set new daily mint value
+      await staking.setDailyMint(ether('8640'))
+      // time passed, new new daily mint value effected
+      await time.increase( 600 )
+      // get emission again
+      const emission2 = await staking.getAccruedEmission(depositTime, depositAmount)
+      console.log('emission2', emission2.userShare.toString())
+    })
+    return
     
     it('APR is not 0 at first, after deposit for some time, change to 0, emission must be the same at anytime withdraw after setting APY to 0', async ()=>{
       // deposit 2 eterh at first
@@ -104,6 +131,7 @@ contract('Staking', accounts=>{
       assert((new BN(0)).eq(await token.balanceOf(LPRewardAddress))) // no emission to reward
     })
   })
+  return
 
   describe('Withdraw', async ()=>{
     beforeEach(async ()=>{ // must use (), not "_" after async
