@@ -54,8 +54,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 4 days;
-    uint256 public constant USER_SHARE_RATE = 0.9 ether;
+    uint256 public constant PARAM_UPDATE_DELAY = 300;
+    uint256 public constant USER_SHARE_RATE = 1 ether;
     bool public withdrawalLocked;
 
     function initialize(
@@ -158,7 +158,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 amount,
         uint256 balance,
         uint256 accruedEmission,
-        uint256 prevDepositDuration
+        uint256 prevDepositDuration,
+        uint256 totalStaked
     );
     function deposit(uint256 _amount) public {
         require(_amount>0, "deposit amount must > 0");
@@ -170,7 +171,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         totalStaked = totalStaked.add(_amount);
         depositDates[_sender] = block.timestamp;
         require(token.transferFrom(_sender, address(this), _amount), "transfer failed");
-        emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
+        emit Deposited(_sender, _amount, newBalance, userShare, timePassed, totalStaked);
     }
 
     function setWithdrawalLocked(bool _withdrawalLocked) public onlyOwner {
@@ -183,7 +184,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 fee,
         uint256 balance,
         uint256 accruedEmission,
-        uint256 lastDepositDuration
+        uint256 lastDepositDuration,
+        uint256 totalStaked
     );
     function withdraw(uint256 _amount) public nonReentrant {
         require( !withdrawalLocked, "withdrawalLocked" );
@@ -203,7 +205,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
             }
         }
         require(token.transfer(_sender, amount), "transfer failed");
-        emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
+        emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed, totalStaked);
     }
 
     function _mint(address _user, uint256 _amount) internal returns (uint256, uint256) {
@@ -224,7 +226,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     }
 
     function getAccruedEmission(uint256 _depositDate, uint256 _amount) public view returns (uint256 total, uint256 userShare, uint256 timePassed) {
-        if (0==_depositDate || 0==_amount || 0==totalStaked) { // if totalStaked equils 0, no need to calculate
+        if (0==_depositDate || 0==_amount) {
             return (0, 0, 0);
         }
         uint256 currentTime = block.timestamp;
@@ -246,6 +248,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
                     timePoints[index] = dailyMintAndTotalStakedHistories[i].timestamp;
                     dailyMints[index] = dailyMintAndTotalStakedHistories[i].dailyMint;
                     totalStakeds[index] = dailyMintAndTotalStakedHistories[i].totalStaked;
+                    if (0==totalStakeds[index-1]) {
+                        totalStakeds[index-1] = totalStakeds[index]; // Histories[0] might be 0
+                    }
                     index++;
                 } else { // dailyMint closest to _depositDate to be the first one
                     dailyMints[0] = dailyMintAndTotalStakedHistories[i].dailyMint;
@@ -253,6 +258,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
                 }
             }
         }
+
         totalStakeds[index.sub(1)] = totalStaked; // index must bigger than 1 here
         timePoints[index] = currentTime;
         for (uint256 j=0; j<index; j++) {
@@ -261,7 +267,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
                 emission = _amount.mul( timePoints[j+1].sub(timePoints[j]) ).mul(dailyMints[j]);
             }
             {
-                emission = emission.div(1 days).div(totalStakeds[j]);
+                emission = emission.div(1 days).div(totalStakeds[j]); // totalStaked>=_amount>0
             }
             total = total.add(emission);
         }
