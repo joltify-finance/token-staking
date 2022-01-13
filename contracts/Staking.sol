@@ -46,14 +46,16 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 public totalStaked;
     mapping(address=>uint256) public balances;
+    mapping(address=>uint256) public balancesReward;
     mapping(address=>uint256) public depositDates;
-    IERC20Mintable public token;
+    IERC20Mintable public token; // LP token, for staking
+    IERC20Mintable public tokenReward; // JOLT token, for reward
 
     UintHistory[] public APRHistories;
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 4 days;
+    uint256 public constant PARAM_UPDATE_DELAY = 300;
     uint256 public constant USER_SHARE_RATE = 1 ether;
     bool public withdrawalLocked;
 
@@ -63,15 +65,18 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 _withdrawalLockDuration,
         address _LPRewardAddress,
         uint256 _basicAPR,
-        bool _withdrawalLocked
+        bool _withdrawalLocked,
+        address _tokenRewardAddress
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
+        require(_tokenRewardAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
         setForcedWithdrawalFee(_forcedWithdrawalFee);
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
         setBasicAPR(_basicAPR);
         withdrawalLocked = _withdrawalLocked;
+        tokenReward = IERC20Mintable(_tokenRewardAddress);
     }
 
     function basicAPR() public view returns (uint256) {
@@ -161,7 +166,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         require(_amount>0, "deposit amount must > 0");
         address _sender = msg.sender;
         // _mint's second argument must be 0, so that it can calculate emission by old balance
-        (uint256 userShare, uint256 timePassed) = _mint(_sender, 0); // emission was added to balances[_sender] and totalStaked in _mint()
+        (uint256 userShare, uint256 timePassed) = _mint(_sender, 0); // emission was added to balancesJolt[_sender] in _mint()
         uint256 newBalance = balances[_sender].add(_amount);
         balances[_sender] = newBalance;
         totalStaked = totalStaked.add(_amount);
@@ -179,6 +184,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 amount,
         uint256 fee,
         uint256 balance,
+        uint256 amountReward,
+        uint256 feeReward,
+        uint256 balanceReward,
         uint256 accruedEmission,
         uint256 lastDepositDuration
     );
@@ -187,33 +195,43 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         address _sender = msg.sender;
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
-        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // emission was added to balances[_sender] and totalStaked in _mint()
-        amount = amount.add(accruedEmission); // withdraw emission together
+        uint256 amountReward = 0;
+        if (balances[_sender]>0) {
+            amountReward = amount.mul(balancesReward[_sender]).div(balances[_sender]);
+        }
+        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // emission was added to balancesReward[_sender] in _mint()
+        amountReward = amountReward.add(accruedEmission);
         balances[_sender] = balances[_sender].sub(amount);
+        balancesReward[_sender] = balancesReward[_sender].sub(amountReward);
         totalStaked = totalStaked.sub(amount);
         uint256 fee = 0;
+        uint256 feeReward = 0;
         if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
             fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
             amount = amount.sub( fee );
             if (fee>0) {
                 require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
             }
+            feeReward = amountReward.mul(forcedWithdrawalFee()).div(ONE_ETHER);
+            amountReward = amountReward.sub( feeReward );
+            if (feeReward>0) {
+                require(tokenReward.transfer(LPRewardAddress(), feeReward), "transfer failed"); // forced fee transfer to LP reward address
+            }
         }
         require(token.transfer(_sender, amount), "transfer failed");
-        emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
+        require(tokenReward.transfer(_sender, amountReward), "transfer failed");
+        emit Withdrawn(_sender, amount, fee, balances[_sender], amountReward, feeReward, balancesReward[_sender], accruedEmission, timePassed);
     }
 
     function _mint(address _user, uint256 _amount) internal returns (uint256, uint256) {
-        uint256 currentBalance = balances[_user];
-        uint256 amount = _amount == 0 ? currentBalance : _amount;
+        uint256 amount = _amount == 0 ? balances[_user] : _amount;
         (uint256 total, uint256 userShare, uint256 timePassed) = getAccruedEmission(depositDates[_user], amount);
         if (total > 0) {
-            token.mint(address(this), total);
-            balances[_user] = currentBalance.add(userShare);
-            totalStaked = totalStaked.add(userShare);
+            tokenReward.mint(address(this), total);
+            balancesReward[_user] = balancesReward[_user].add(userShare);
             require(userShare<=total, "userShare>total is not allowed");
             if (total>userShare) {
-                require(token.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
+                require(tokenReward.transfer(LPRewardAddress(), total.sub(userShare)), "transfer failed");
             }
         }
         return (userShare, timePassed);
