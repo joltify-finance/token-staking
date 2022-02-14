@@ -41,7 +41,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     AddressParam public LPRewardAddressParam;
     UintParam public forcedWithdrawalFeeParam;
-    UintParam public withdrawalLockDurationParam;
+    UintParam public withdrawalLockDurationParam; // before withdrawalLockDuration from deposit time, withdrawal is not allowed
     UintParam public basicAPRParam;
 
     uint256 public totalStaked;
@@ -53,14 +53,14 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 4 days;
+    uint256 public constant PARAM_UPDATE_DELAY = 300; // default 4 days
     uint256 public constant USER_SHARE_RATE = 1 ether;
     bool public withdrawalLocked;
 
     function initialize(
         address _tokenAddress,
         uint256 _forcedWithdrawalFee,
-        uint256 _withdrawalLockDuration,
+        uint256 _withdrawalLockDuration, // default 10 days
         address _LPRewardAddress,
         uint256 _basicAPR,
         bool _withdrawalLocked
@@ -177,7 +177,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     event Withdrawn(
         address indexed sender,
         uint256 amount,
-        uint256 fee,
         uint256 balance,
         uint256 accruedEmission,
         uint256 lastDepositDuration
@@ -185,22 +184,15 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     function withdraw(uint256 _amount) public nonReentrant {
         require( !withdrawalLocked, "withdrawalLocked" );
         address _sender = msg.sender;
+        require(depositDates[_sender].add(withdrawalLockDuration()) < block.timestamp, "withdrawal is not allowed now");
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
         (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // emission was added to balances[_sender] and totalStaked in _mint()
         amount = amount.add(accruedEmission); // withdraw emission together
         balances[_sender] = balances[_sender].sub(amount);
         totalStaked = totalStaked.sub(amount);
-        uint256 fee = 0;
-        if ( depositDates[_sender].add(withdrawalLockDuration()) > block.timestamp ) {
-            fee = amount.mul(forcedWithdrawalFee()).div(ONE_ETHER);
-            amount = amount.sub( fee );
-            if (fee>0) {
-                require(token.transfer(LPRewardAddress(), fee), "transfer failed"); // forced fee transfer to LP reward address
-            }
-        }
         require(token.transfer(_sender, amount), "transfer failed");
-        emit Withdrawn(_sender, amount, fee, balances[_sender], accruedEmission, timePassed);
+        emit Withdrawn(_sender, amount, balances[_sender], accruedEmission, timePassed);
     }
 
     function _mint(address _user, uint256 _amount) internal returns (uint256, uint256) {
