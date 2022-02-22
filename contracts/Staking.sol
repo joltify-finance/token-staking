@@ -53,17 +53,17 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 300; // default 4 days
+    uint256 public constant PARAM_UPDATE_DELAY = 4 days; // default 4 days
     uint256 public constant USER_SHARE_RATE = 1 ether;
     bool public withdrawalLocked;
 
     function initialize(
         address _tokenAddress,
-        uint256 _forcedWithdrawalFee,
-        uint256 _withdrawalLockDuration, // default 10 days
-        address _LPRewardAddress,
-        uint256 _basicAPR,
-        bool _withdrawalLocked
+        uint256 _forcedWithdrawalFee, // default 2%
+        uint256 _withdrawalLockDuration, // default 10 months
+        address _LPRewardAddress, // 
+        uint256 _basicAPR, // 10%
+        bool _withdrawalLocked // false
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
