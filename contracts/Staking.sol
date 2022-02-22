@@ -60,13 +60,13 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
     bool public withdrawalLocked;
 
     function initialize(
-        address _tokenAddress,
+        address _tokenAddress, // LP
         uint256 _forcedWithdrawalFee, // default 2%
         uint256 _withdrawalLockDuration, // default 10 minths
         address _LPRewardAddress,
         uint256 _basicAPR, // default 20%
         bool _withdrawalLocked, // default false
-        address _tokenRewardAddress
+        address _tokenRewardAddress // JOLT
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         require(_tokenRewardAddress.isContract(), "not a contract address");
