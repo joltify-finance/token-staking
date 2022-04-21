@@ -53,9 +53,8 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 private constant YEAR = 365 days;
     uint256 private constant ONE_ETHER = 1 ether;
-    uint256 public constant PARAM_UPDATE_DELAY = 300; // default 5 days
+    uint256 public constant PARAM_UPDATE_DELAY = 5 days; // default 5 days
     uint256 public constant USER_SHARE_RATE = 1 ether;
-    // bool public withdrawalLocked;
 
     function initialize(
         address _tokenAddress,
@@ -63,7 +62,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 _withdrawalLockDuration,
         address _LPRewardAddress,
         uint256 _basicAPR
-        // bool _withdrawalLocked
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
         token = IERC20Mintable(_tokenAddress);
@@ -71,7 +69,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         setWithdrawalLockDuration(_withdrawalLockDuration);
         setLPRewardAddress(_LPRewardAddress);
         setBasicAPR(_basicAPR);
-        // withdrawalLocked = _withdrawalLocked;
     }
 
     function basicAPR() public view returns (uint256) {
@@ -170,10 +167,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         emit Deposited(_sender, _amount, newBalance, userShare, timePassed);
     }
 
-    // function setWithdrawalLocked(bool _withdrawalLocked) public onlyOwner {
-    //     withdrawalLocked = _withdrawalLocked;
-    // }
-
     event Withdrawn(
         address indexed sender,
         uint256 amount,
@@ -183,7 +176,6 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 lastDepositDuration
     );
     function withdraw(uint256 _amount) public nonReentrant {
-        // require( !withdrawalLocked, "withdrawalLocked" );
         address _sender = msg.sender;
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
