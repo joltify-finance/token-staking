@@ -196,11 +196,10 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
         uint256 amountReward = 0;
+        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, balances[_sender]); // use LP balance to calc emission, then add to JOTL balance
         if (balances[_sender]>0) {
             amountReward = amount.mul(balancesReward[_sender]).div(balances[_sender]);
         }
-        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // emission was added to balancesReward[_sender] in _mint()
-        amountReward = amountReward.add(accruedEmission);
         balances[_sender] = balances[_sender].sub(amount);
         balancesReward[_sender] = balancesReward[_sender].sub(amountReward);
         totalStaked = totalStaked.sub(amount);
