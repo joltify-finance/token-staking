@@ -46,7 +46,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
 
     uint256 public totalStaked;
     mapping(address=>uint256) public balances;
-    mapping(address=>uint256) public balancesReward;
+    mapping(address=>uint256) public balancesReward; // JOLT
     mapping(address=>uint256) public depositDates;
     IERC20Mintable public token; // LP token, for staking
     IERC20Mintable public tokenReward; // JOLT token, for reward
@@ -63,7 +63,7 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         uint256 _forcedWithdrawalFee, // default 5%
         uint256 _withdrawalLockDuration, // default 3 days
         address _LPRewardAddress,
-        uint256 _basicAPR, // default 200%
+        uint256 _basicAPR, // default
         address _tokenRewardAddress // JOLT
     ) external initializer onlyOwner {
         require(_tokenAddress.isContract(), "not a contract address");
@@ -188,9 +188,9 @@ contract Staking is Ownable, ReentrancyGuard, Initializable {
         require( balances[_sender] >= _amount , "insufficient amount");
         uint256 amount = 0==_amount ? balances[_sender] : _amount;
         uint256 amountReward = 0;
-        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, balances[_sender]); // use LP balance to calc emission, then add to JOTL balance
+        (uint256 accruedEmission, uint256 timePassed) = _mint(_sender, amount); // use LP balance to calc emission, then add to JOTL balance
         if (balances[_sender]>0) {
-            amountReward = amount.mul(balancesReward[_sender]).div(balances[_sender]);
+            amountReward = balancesReward[_sender];
         }
         balances[_sender] = balances[_sender].sub(amount);
         balancesReward[_sender] = balancesReward[_sender].sub(amountReward);
